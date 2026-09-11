@@ -37,6 +37,11 @@
 param(
   [Parameter(Mandatory=$true)][string]$ExePath,
   [string]$OutDir = "artifacts",
+  # The process to look for. Was hardcoded to the app this script came from, which is
+  # how it threw "No process named 'Keep the Diff'" on a run where Prompt Petal had
+  # launched perfectly and the step before had just said so. Defaults to the .exe's own
+  # base name, which is what Windows names the process anyway.
+  [string]$AppName = "",
   # Sits between the two measured cases with room on both sides. Both numbers come from real
   # runs, not from judgement: 15.7 correct, 39.7 wrong.
   [int]$MaxMeanDiff = 26
@@ -54,9 +59,10 @@ public class IconApi {
 }
 "@
 
-$proc = Get-Process -Name "Keep the Diff" -ErrorAction SilentlyContinue |
+if (-not $AppName) { $AppName = [IO.Path]::GetFileNameWithoutExtension($ExePath) }
+$proc = Get-Process -Name $AppName -ErrorAction SilentlyContinue |
         Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-if (-not $proc) { throw "No process named 'Keep the Diff' with a visible window" }
+if (-not $proc) { throw "No process named '$AppName' with a visible window" }
 $h = $proc.MainWindowHandle
 
 # WM_GETICON: ICON_SMALL2 (2) is what the title bar draws, and Windows synthesises it from the
