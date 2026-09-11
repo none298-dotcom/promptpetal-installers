@@ -339,53 +339,16 @@ jobs:
             exit 1
           }
           Write-Host "still running after ${{ inputs.wait_seconds }}s"
-
-          # ── Not alive. A WINDOW. ─────────────────────────────────────────
-          #
-          # "Still running" passed a build that installed and then put up a modal box
-          # reading "Prompt Petal.exe: Failed to launch JVM". The process had not exited,
-          # because it was sitting on that dialog, and the step said pass. The notes this
-          # workflow is ported from warn about exactly this in exactly these words.
-          #
-          # The title and the SIZE are both checked, and the size is the one that bites: a
-          # JVM launch failure shows a small dialog whose title is the .exe's own file
-          # name, so a title check alone can be satisfied by the error itself.
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @"
-            using System;
-            using System.Runtime.InteropServices;
-            public class Win {
-              [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
-              public struct R { public int L, T, Rr, B; }
-            }
-"@
-          $windows = (Get-Process -Id $proc.Id).MainWindowHandle
-          if ($windows -eq 0) {
-            Write-Host "::error::The app is running but has no main window. That is what a crash dialog owned by a different thread, or a silent failure to open one, looks like."
-            exit 1
-          }
-          $r = New-Object Win+R
-          [void][Win]::GetWindowRect($windows, [ref]$r)
-          $w = $r.Rr - $r.L
-          $h = $r.B - $r.T
-          $title = (Get-Process -Id $proc.Id).MainWindowTitle
-          Write-Host "main window: '$title'  ${w}x${h}"
-
-          # The app asks for 560x940. A dialog is a couple of hundred points across.
-          # 400 sits well below the real window and well above any error box.
-          if ($w -lt 400 -or $h -lt 400) {
-            Write-Host "::error::The main window is ${w}x${h}, far smaller than this app's 560x940. That is the shape of an error dialog, not of the app. Look at the screenshot in the artifacts."
-            exit 1
-          }
-          # The .exe's own base name as a window title is the signature of the JVM
-          # launcher failing before the app names its window.
-          if ($title -like "*.exe*") {
-            Write-Host "::error::The window is titled '$title'. A window titled after the executable is the jpackage launcher's error box, not the app."
-            exit 1
-          }
-          Write-Host "window ok, it is the app and not a dialog"
-
           "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "pid=$($proc.Id)" >> $env:GITHUB_OUTPUT
+
+      # "Still running" is not "works". It passed a build that installed and then put up
+      # a modal box reading "Failed to launch JVM": the process had not exited, because it
+      # was sitting on that dialog. The notes this workflow came from warn about exactly
+      # that, and I ported the warning without porting the check.
+      - name: Assert the thing on screen is the app and not an error dialog
+        shell: pwsh
+        run: ./ci/scripts/assert-app-window.ps1 -ProcessId ${{ steps.launch.outputs.pid }} -MinWidth 400 -MinHeight 400
 
       # The owner has failed store submissions over a stock Java placeholder in the
       # title bar and in Alt+Tab. It was caught by a human looking at a screenshot.
