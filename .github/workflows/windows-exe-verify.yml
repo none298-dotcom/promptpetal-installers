@@ -44,6 +44,13 @@ on:
       source_ref:
         description: "Branch, tag or sha of the private source to build"
         default: main
+      channel:
+        description: "Which copy to build: the website's, or the Microsoft Store's, which charges store prices"
+        type: choice
+        default: website
+        options:
+          - website
+          - microsoft
 
 permissions:
   contents: read
@@ -51,7 +58,9 @@ permissions:
 
 jobs:
   build-and-verify:
-    runs-on: windows-latest
+    # Pinned, not windows-latest. Reveal the Dream found windows-latest moved to Server 2025,
+    # where a byte identical installer passed one run in six against three of three on 2022.
+    runs-on: windows-2022
     # TRAP, paid for on a sibling project: `secrets` is not valid in a step level `if:`.
     # Surfacing them as job level `env` is the supported way for a step to ask "is
     # signing configured here", and it keeps the build working in a fork with no Azure
@@ -84,7 +93,7 @@ jobs:
           $sha = git rev-parse HEAD
           Write-Host "verifying promptpetal @ $sha"
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          "source_repo: none298-dotcom/promptpetal`nsource_ref: ${{ inputs.source_ref }}`nsource_sha: $sha`nbreak_mode: ${{ inputs.break_mode }}" |
+          "source_repo: none298-dotcom/promptpetal`nsource_ref: ${{ inputs.source_ref }}`nsource_sha: $sha`nchannel: ${{ inputs.channel }}`nbreak_mode: ${{ inputs.break_mode }}" |
             Out-File artifacts/provenance.txt
           "sha=$sha" >> $env:GITHUB_OUTPUT
 
@@ -131,7 +140,7 @@ jobs:
       - name: Build the EXE
         working-directory: desktop
         shell: pwsh
-        run: ./gradlew.bat packageExe --no-daemon
+        run: ./gradlew.bat packageExe --no-daemon "-Pchannel=${{ inputs.channel }}"
 
       - name: Find the installer
         id: find
@@ -396,5 +405,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-verification-${{ steps.src.outputs.sha }}
+          name: windows-verification-${{ inputs.channel }}-${{ steps.src.outputs.sha }}
           path: artifacts
