@@ -393,6 +393,10 @@ jobs:
           if ($out -notmatch '"add_prompt"') { throw "tools/list came back without add_prompt." }
           Write-Host "The installed app answered initialize and tools/list over MCP."
 
+      - name: The ring opens and closes from the keyboard
+        shell: pwsh
+        run: ./ci/scripts/press-ring-shortcut.ps1 -ExePath "${{ steps.launch.outputs.exe }}" -OutDir artifacts
+
       - name: Screenshot the desktop
         if: always()
         continue-on-error: true
