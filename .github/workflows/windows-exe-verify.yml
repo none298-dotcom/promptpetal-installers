@@ -366,6 +366,33 @@ jobs:
         shell: pwsh
         run: ./ci/scripts/verify-window-icon.ps1 -ExePath "${{ steps.launch.outputs.exe }}" -OutDir artifacts
 
+      # An AI app starts `Prompt Petal.exe mcp` and talks to it over standard input and output.
+      # A windowed launcher can come without usable standard handles, and only running the
+      # installed binary the way an AI app does shows whether the replies arrive.
+      - name: The installed app answers an AI app over MCP
+        shell: pwsh
+        run: |
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = "${{ steps.launch.outputs.exe }}"
+          $psi.Arguments = 'mcp'
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.EnvironmentVariables['PROMPTPETAL_HOME'] = "$env:RUNNER_TEMP\promptpetal-mcp"
+          $p = [System.Diagnostics.Process]::Start($psi)
+          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}')
+          $p.StandardInput.WriteLine('{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
+          $p.StandardInput.Close()
+          $reply = $p.StandardOutput.ReadToEndAsync()
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "Prompt Petal.exe mcp did not finish within 90 seconds" }
+          $out = $reply.Result
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $out | Out-File artifacts/mcp-reply.txt
+          Write-Host $out
+          if ($out -notmatch '"protocolVersion":"2025-06-18"') { throw "No initialize reply came back over standard output." }
+          if ($out -notmatch '"add_prompt"') { throw "tools/list came back without add_prompt." }
+          Write-Host "The installed app answered initialize and tools/list over MCP."
+
       - name: Screenshot the desktop
         if: always()
         continue-on-error: true
