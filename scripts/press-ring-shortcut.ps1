@@ -23,6 +23,15 @@ public class RingKeys {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint vk);
+  [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
+  // Whether some process already holds Ctrl + Alt + Space: trying to take it fails with 1409
+  // (ERROR_HOTKEY_ALREADY_REGISTERED) when the app registered it.
+  public static string WhoHoldsCtrlAltSpace() {
+    if (RegisterHotKey(IntPtr.Zero, 0x7A7A, 2 | 1, 0x20)) { UnregisterHotKey(IntPtr.Zero, 0x7A7A); return "nobody: the app did not register the keys"; }
+    int error = Marshal.GetLastWin32Error();
+    return error == 1409 ? "already registered, as the app should have" : "refused with error " + error;
+  }
   public static List<uint> VisibleWindowOwners() {
     var owners = new List<uint>();
     EnumWindows((h, l) => { if (IsWindowVisible(h)) { uint p; GetWindowThreadProcessId(h, out p); owners.Add(p); } return true; }, IntPtr.Zero);
@@ -45,6 +54,7 @@ function Count-AppWindows {
 }
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
+Write-Host "Ctrl + Alt + Space: $([RingKeys]::WhoHoldsCtrlAltSpace())"
 $before = Count-AppWindows
 [RingKeys]::CtrlAltSpace()
 Start-Sleep -Seconds 4
