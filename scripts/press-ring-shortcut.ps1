@@ -55,17 +55,28 @@ function Count-AppWindows {
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 Write-Host "Ctrl + Alt + Space: $([RingKeys]::WhoHoldsCtrlAltSpace())"
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+function Save-Screen([string]$name) {
+  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+  [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+  $bitmap.Save((Join-Path $OutDir $name))
+}
+# The app writes what went wrong here, so a failure says why rather than only that it failed.
+function Show-AppError {
+  $log = Join-Path $env:APPDATA "PromptPetal\last-error.txt"
+  if (Test-Path $log) { Write-Host "--- $log"; Get-Content $log | Select-Object -First 40 | ForEach-Object { Write-Host $_ } }
+  Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { Write-Host "window: $($_.ProcessName) '$($_.MainWindowTitle)'" }
+}
+Save-Screen "before-ring-keys.png"
 $before = Count-AppWindows
 [RingKeys]::CtrlAltSpace()
 Start-Sleep -Seconds 4
 $open = Count-AppWindows
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-[System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-$bitmap.Save((Join-Path $OutDir "ring-from-keyboard.png"))
+Save-Screen "ring-from-keyboard.png"
 Write-Host "app windows: $before before the keys, $open after"
 if ($open -le $before) {
+  Show-AppError
   Write-Host "::error::Ctrl + Alt + Space did not open the ring: the app has $open visible windows, as many as before ($before)."
   exit 1
 }
@@ -74,6 +85,7 @@ Start-Sleep -Seconds 3
 $closed = Count-AppWindows
 Write-Host "app windows after pressing again: $closed"
 if ($closed -ge $open) {
+  Show-AppError
   Write-Host "::error::Pressing Ctrl + Alt + Space again did not close the ring."
   exit 1
 }
