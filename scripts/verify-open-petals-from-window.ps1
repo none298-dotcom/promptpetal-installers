@@ -105,11 +105,20 @@ $notepad = Start-Process notepad.exe -PassThru
 $deadline = (Get-Date).AddSeconds(15)
 while ($notepad.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300; $notepad.Refresh() }
 if ($notepad.MainWindowHandle -eq 0) { throw "Notepad never showed a window" }
-[void][OpenPetalsClick]::SetForegroundWindow($notepad.MainWindowHandle)
+# A real click in Notepad's text area, the way the certifier put the cursor there.
+# SetForegroundWindow alone is refused while another app owns the foreground (it was,
+# in run 35427585947: the text went nowhere and Notepad stayed empty behind us).
+$npRect = New-Object OpenPetalsClick+Rect
+[void][OpenPetalsClick]::GetWindowRect($notepad.MainWindowHandle, [ref]$npRect)
+[OpenPetalsClick]::ClickAt([int](($npRect.Left + $npRect.Right) / 2), [int](($npRect.Top + $npRect.Bottom) / 2))
 Start-Sleep -Milliseconds 500
 [System.Windows.Forms.SendKeys]::SendWait($TypedText.Replace("{", "{{}").Replace("}", "{}}"))
 Start-Sleep -Milliseconds 300
 Save-Screen "open-petals-before.png"
+# The setup itself has to hold before the app is judged: Notepad must have the typing.
+if ([OpenPetalsClick]::NotepadText($notepad.MainWindowHandle) -notlike "*Testing certification steps*") {
+  throw "Test setup failed: the typed text never reached Notepad. See open-petals-before.png."
+}
 
 # ── Step 3a: bring Prompt Petal's own window back to the front ─────────────
 # Exactly what a person did to trigger the rejection: Notepad was in front, and now
@@ -119,17 +128,22 @@ if ($appPids.Count -eq 0) { throw "No Prompt Petal process is running from $fold
 $before = [OpenPetalsClick]::VisibleWindows($appPids)
 $main = $before.GetEnumerator() | Where-Object { [OpenPetalsClick]::TitleOf($_.Key) -like "*$env:APP_NAME*" } | Select-Object -First 1
 if (-not $main) { throw "No visible Prompt Petal window to click Open Petals in" }
-[void][OpenPetalsClick]::SetForegroundWindow($main.Key)
+# By a real click on its title bar, for the same reason. The app's foreground poll runs
+# every 400 ms, so give it time to have seen Notepad in front first.
+Start-Sleep -Milliseconds 800
+[OpenPetalsClick]::ClickAt($main.Value.Left + 200, $main.Value.Top + 15)
 Start-Sleep -Milliseconds 500
 
 # ── Step 3b: click "Open Petals" by its position in that window ────────────
-# Header.kt puts it at the right edge of a 28dp padded row, level with the title. There
+# MainScreen.kt's Header puts it at the right edge of the padded row, level with the title. There
 # is no accessibility tree to ask for it by name: Compose Desktop draws the whole window
 # as one Skia surface with nothing else for Windows to see, so this is a coordinate, the
 # way a real click is.
 $rect = $main.Value
-$openPetalsX = $rect.Right - 100
-$openPetalsY = $rect.Top + 50
+# Measured on open-petals-no-ring.png at 100% scale: window 48,48 - 668,808, button
+# centered at 569,135. Top + 50 landed in the padding above it.
+$openPetalsX = $rect.Right - 92
+$openPetalsY = $rect.Top + 87
 Write-Host "clicking Open Petals at $openPetalsX, $openPetalsY (window $($rect.Left),$($rect.Top) - $($rect.Right),$($rect.Bottom))"
 [OpenPetalsClick]::ClickAt($openPetalsX, $openPetalsY)
 
@@ -147,6 +161,7 @@ while (-not $ring -and (Get-Date) -lt $deadline) {
 }
 if (-not $ring) {
   Save-Screen "open-petals-no-ring.png"
+  Write-Host "Notepad reads: $([OpenPetalsClick]::NotepadText($notepad.MainWindowHandle))"
   throw "Clicking Open Petals did not open a new window. See open-petals-no-ring.png."
 }
 $ringRect = $ring.Value
