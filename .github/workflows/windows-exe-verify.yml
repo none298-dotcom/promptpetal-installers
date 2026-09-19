@@ -449,3 +449,12 @@ jobs:
         with:
           name: windows-verification-${{ inputs.channel }}-${{ steps.src.outputs.sha }}
           path: artifacts
+
+      # The screenshots alone, so looking at them does not mean downloading the installer too.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-${{ inputs.channel }}-${{ steps.src.outputs.sha }}
+          path: |
+            artifacts/*.png
+            artifacts/*.txt
