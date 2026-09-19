@@ -397,6 +397,17 @@ jobs:
         shell: pwsh
         run: ./ci/scripts/press-ring-shortcut.ps1 -ExePath "${{ steps.launch.outputs.exe }}" -OutDir artifacts
 
+      # Microsoft's 10.1.2.10 rejection of 09/17: "Open Petals... Notice nothing
+      # happened." The step above proves the global shortcut works, which is a
+      # different code path (it never moves focus off whatever app was already there).
+      # This proves the button in the window itself works, which is the one the
+      # certifier actually clicked, by opening Notepad, typing into it, then driving
+      # Prompt Petal's own window the way a person would: click Open Petals, pick a
+      # petal, and check the words actually landed in Notepad.
+      - name: Open Petals from the window types into Notepad, not into Prompt Petal
+        shell: pwsh
+        run: ./ci/scripts/verify-open-petals-from-window.ps1 -ExePath "${{ steps.launch.outputs.exe }}" -OutDir artifacts
+
       - name: Screenshot the desktop
         if: always()
         continue-on-error: true
