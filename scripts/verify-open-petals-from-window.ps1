@@ -167,11 +167,15 @@ if (-not $ring) {
 $ringRect = $ring.Value
 $centerX = [int](($ringRect.Left + $ringRect.Right) / 2)
 $centerY = [int](($ringRect.Top + $ringRect.Bottom) / 2)
+# Let the bloom finish first: in run 35429930149 a click 0.3 s after the window appeared
+# landed while the petals were still opening and picked nothing (open-petals-after.png
+# showed the ring still up). The middle of the top petal there sat about 90 above the hub.
+Start-Sleep -Milliseconds 1200
 $petalX = $centerX
-$petalY = $centerY - 70
+$petalY = $centerY - 90
 Write-Host "clicking the first petal at $petalX, $petalY (ring window $($ringRect.Left),$($ringRect.Top) - $($ringRect.Right),$($ringRect.Bottom))"
 [OpenPetalsClick]::ClickAt($petalX, $petalY)
-Start-Sleep -Milliseconds 800
+Start-Sleep -Milliseconds 1500
 Save-Screen "open-petals-after.png"
 
 # ── Step 4: read what actually landed in Notepad ────────────────────────────
