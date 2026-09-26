@@ -200,7 +200,14 @@ jobs:
       - name: The card carries the real petals, and the Pro and empty states
         shell: pwsh
         run: |
-          $exe = Join-Path $env:location "PromptPetal.WidgetProvider.exe"
+          # The same signed exe that went into the package. Windows refuses to start a file
+          # straight out of C:\Program Files\WindowsApps from outside its package, so the
+          # command line modes run the identical binary from the publish folder; the COM
+          # step above already proved the packaged copy starts as the server.
+          $exe = (Resolve-Path widget-out/PromptPetal.WidgetProvider.exe).Path
+          if ((Get-FileHash $exe).Hash -ne (Get-FileHash (Join-Path $env:location "PromptPetal.WidgetProvider.exe")).Hash) {
+            throw "The publish folder's provider is not byte for byte the packaged one"
+          }
           $root = "$env:RUNNER_TEMP\widget-cards"
           $pro = '{"source":"lifetime","updatedAt":"2026-09-26T00:00:00Z"}'
           $board = '[{"id":"00000000-0000-0000-0000-000000000001","name":"General","isDefault":true}]'
@@ -258,7 +265,7 @@ jobs:
 
       - name: A tap on a petal lands its words in Notepad
         shell: pwsh
-        run: ./ci/scripts/verify-widget-tap.ps1 -AppExe "${{ steps.app.outputs.exe }}" -ProviderExe (Join-Path $env:location "PromptPetal.WidgetProvider.exe") -PetalId $env:RESEARCH_ID -OutDir artifacts
+        run: ./ci/scripts/verify-widget-tap.ps1 -AppExe "${{ steps.app.outputs.exe }}" -ProviderExe (Resolve-Path widget-out/PromptPetal.WidgetProvider.exe).Path -PetalId $env:RESEARCH_ID -OutDir artifacts
 
       - name: Screenshot the desktop
         if: always()
