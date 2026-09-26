@@ -165,6 +165,9 @@ jobs:
         run: |
           $sig = Get-AuthenticodeSignature desktop/widget/out/PromptPetalWidget.msix
           Write-Host "MSIX signature: $($sig.Status) by $($sig.SignerCertificate.Subject)"
+          # PowerShell 7 cannot load the Appx module natively ("Operation is not supported
+          # on this platform"); it loads through Windows PowerShell compatibility.
+          Import-Module Appx -UseWindowsPowerShell -WarningAction SilentlyContinue
           Add-AppxPackage -Path desktop/widget/out/PromptPetalWidget.msix
           $p = Get-AppxPackage -Name LittleBirdTrading.PromptPetalWidget
           if (-not $p) { throw "The widget package is not registered after Add-AppxPackage" }
