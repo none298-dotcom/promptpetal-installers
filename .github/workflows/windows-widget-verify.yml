@@ -210,11 +210,11 @@ jobs:
             Write-Host "::warning::The Pro store has no petals ON PURPOSE. The Pro card assertion MUST fail."
           }
           function Card($name, $entitlement, $petalsJson) {
-            $home = "$root\$name"; New-Item -ItemType Directory -Force $home, "$root\$name-out" | Out-Null
-            if ($entitlement) { Set-Content "$home\entitlement.json" $entitlement -Encoding utf8 }
-            Set-Content "$home\boards.json" $board -Encoding utf8
-            Set-Content "$home\petals.json" $petalsJson -Encoding utf8
-            $env:PROMPTPETAL_HOME = $home
+            $store = "$root\$name"; New-Item -ItemType Directory -Force $store, "$root\$name-out" | Out-Null
+            if ($entitlement) { Set-Content "$store\entitlement.json" $entitlement -Encoding utf8 }
+            Set-Content "$store\boards.json" $board -Encoding utf8
+            Set-Content "$store\petals.json" $petalsJson -Encoding utf8
+            $env:PROMPTPETAL_HOME = $store
             & $exe --card "$root\$name-out"
             if ($LASTEXITCODE -ne 0) { throw "--card exited $LASTEXITCODE for $name" }
             $data = Get-Content "$root\$name-out\data.json" -Raw
