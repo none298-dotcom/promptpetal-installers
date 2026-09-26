@@ -58,8 +58,7 @@ Set-Content "$data\entitlement.json" '{"source":"lifetime","updatedAt":"2026-09-
 
 # ── With no app running, the tap reports that nobody is listening ────────────
 Get-Process | Where-Object { $_.Path -eq $AppExe } | Stop-Process -Force -EA SilentlyContinue
-& $ProviderExe --tap $PetalId
-$code = $LASTEXITCODE
+$code = (Start-Process -FilePath $ProviderExe -ArgumentList @("--tap", $PetalId) -WindowStyle Hidden -Wait -PassThru).ExitCode
 Write-Host "tap with the app closed exited $code"
 if ($code -ne 2) { throw "With Prompt Petal closed, --tap should exit 2 (nobody listening), not $code" }
 

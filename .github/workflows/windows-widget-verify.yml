@@ -193,6 +193,9 @@ jobs:
           if (-not $server.Path.StartsWith($env:location, [StringComparison]::OrdinalIgnoreCase)) {
             throw "The COM server ran from $($server.Path), not from the installed package at $env:location"
           }
+          # A console window on screen would pop up on every real Widgets board load.
+          $consoles = Get-Process -Name conhost, WindowsTerminal -EA SilentlyContinue | Where-Object { $_.Parent.Id -eq $server.Id }
+          if ($server.MainWindowHandle -ne 0 -or $consoles) { throw "The widget server opened a window of its own" }
           if ($obj -eq $null) { Write-Host "::warning::The server started from the package, but no object came back to this client (expected when the class is WinRT-only)." }
           Write-Host "The provider activated out of process from the installed package."
 
@@ -222,8 +225,9 @@ jobs:
             Set-Content "$store\boards.json" $board -Encoding utf8
             Set-Content "$store\petals.json" $petalsJson -Encoding utf8
             $env:PROMPTPETAL_HOME = $store
-            & $exe --card "$root\$name-out"
-            if ($LASTEXITCODE -ne 0) { throw "--card exited $LASTEXITCODE for $name" }
+            # The provider is a windowless app, so PowerShell would not wait for it with &.
+            $run = Start-Process -FilePath $exe -ArgumentList @("--card", "$root\$name-out") -Wait -PassThru -WindowStyle Hidden
+            if ($run.ExitCode -ne 0) { throw "--card exited $($run.ExitCode) for $name" }
             $data = Get-Content "$root\$name-out\data.json" -Raw
             Copy-Item "$root\$name-out\data.json" "artifacts/card-$name-data.json"
             Copy-Item "$root\$name-out\template.json" "artifacts/card-template.json" -Force
