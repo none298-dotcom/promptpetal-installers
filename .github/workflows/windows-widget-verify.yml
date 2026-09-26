@@ -1,0 +1,288 @@
+name: Build and verify the Windows 11 widget
+
+# Prompt Petal's Windows 11 widget, proven the family way: on a real Windows runner, from
+# the private source, signed with the same Trusted Signing identity as the EXE.
+#
+# What this proves: the widget provider builds; its MSIX packs, signs and installs; Windows
+# registers the widget extension and the COM server; the COM class activates out of process
+# from the installed package; the card the provider hands the Widgets board carries the
+# real petals (and the Pro and empty states); and a tap on a petal reaches the running app
+# and the petal's words land in Notepad.
+#
+# What this cannot prove: the widget pinned on the Widgets board itself. The runner is
+# Windows Server, which has no Widgets board. That one picture needs a Windows 11 desktop.
+#
+# The source is fetched with a read-only deploy key, the same as windows-exe-verify.yml,
+# whose comments explain why this repo is public and holds no source.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or sha of the private source to build"
+        default: windows-widget
+      break_mode:
+        description: "Inject a known defect, to prove an assertion goes red. Always 'none' for a real build."
+        type: choice
+        default: none
+        options:
+          - none
+          - empty_card        # the provider is handed a store with no petals: the Pro card assertion must fail
+          - wrong_publisher   # the manifest names a publisher the certificate does not: install must fail
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  widget:
+    runs-on: windows-2022
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      APP_NAME: Prompt Petal
+      CLSID: 3CF75C43-4E22-49E8-A9DB-8B03C24CDF27
+      RESEARCH_ID: 42977694-ED98-45E5-8751-F31F0FF99D90
+    steps:
+      - name: Check out the private source
+        uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+
+      - name: Check out this repo's own scripts
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - name: Record exactly which commit is being verified
+        id: src
+        shell: pwsh
+        run: |
+          $sha = git rev-parse HEAD
+          Write-Host "verifying promptpetal @ $sha"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          "source_ref: ${{ inputs.source_ref }}`nsource_sha: $sha`nbreak_mode: ${{ inputs.break_mode }}" | Out-File artifacts/provenance.txt
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Give the runner a display the window fits on
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "::warning::Set-DisplayResolution failed: $_" }
+
+      # ── The provider ────────────────────────────────────────────────────────
+      - name: Build the widget provider
+        shell: pwsh
+        run: |
+          dotnet publish desktop/widget/PetalWidgetProvider.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o widget-out
+          if (-not (Test-Path widget-out/PromptPetal.WidgetProvider.exe)) { throw "No PromptPetal.WidgetProvider.exe was published" }
+          Get-ChildItem widget-out | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+      - name: Azure login (federated, OIDC)
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # The provider exe is signed first for two reasons: it ships inside the MSIX signed,
+      # and its certificate's subject is what the MSIX manifest's Publisher must equal,
+      # exactly. Trusted Signing mints a short lived certificate, so the subject is read
+      # from this run's signature rather than typed into the manifest by hand.
+      - name: Sign the provider exe
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          trusted-signing-account-name: mlcsigning
+          certificate-profile-name: mlc-public-trust
+          files-folder: ${{ github.workspace }}/widget-out
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Write the package folder, with the certificate's publisher
+        id: pkg
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature widget-out/PromptPetal.WidgetProvider.exe
+          if ($sig.Status -ne "Valid") { throw "The provider exe is not signed (status $($sig.Status)); an MSIX cannot be installed unsigned." }
+          $subject = $sig.SignerCertificate.Subject
+          Write-Host "certificate subject: $subject"
+          if ("${{ inputs.break_mode }}" -eq "wrong_publisher") {
+            $subject = "CN=Somebody Else LLC"
+            Write-Host "::warning::Publisher set to a name the certificate does not carry ON PURPOSE. Install MUST fail."
+          }
+          $pkg = "widget-package"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item widget-out/* $pkg -Recurse
+          Copy-Item desktop/widget/Package/ProviderAssets $pkg -Recurse
+          New-Item -ItemType Directory -Force "$pkg/Public" | Out-Null
+          [xml]$m = Get-Content desktop/widget/Package/Package.appxmanifest
+          $m.Package.Identity.Publisher = $subject
+          $m.Save((Resolve-Path $pkg).Path + "\AppxManifest.xml")
+          Get-Content "$pkg/AppxManifest.xml" | Select-String -Pattern 'Publisher=|ClassId|Class Id|AppExtension Name' | Write-Host
+          "subject=$subject" >> $env:GITHUB_OUTPUT
+
+      - name: Pack the MSIX
+        shell: pwsh
+        run: |
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makeappx.exe |
+                      Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $makeappx) { throw "makeappx.exe not found in the Windows SDK on this runner" }
+          New-Item -ItemType Directory -Force desktop/widget/out | Out-Null
+          & $makeappx.FullName pack /o /d widget-package /p desktop/widget/out/PromptPetalWidget.msix
+          if ($LASTEXITCODE -ne 0) { throw "makeappx failed with $LASTEXITCODE" }
+
+      - name: Sign the MSIX
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          trusted-signing-account-name: mlcsigning
+          certificate-profile-name: mlc-public-trust
+          files-folder: ${{ github.workspace }}/desktop/widget/out
+          files-folder-filter: msix
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Install the MSIX and read its registration back
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature desktop/widget/out/PromptPetalWidget.msix
+          Write-Host "MSIX signature: $($sig.Status) by $($sig.SignerCertificate.Subject)"
+          Add-AppxPackage -Path desktop/widget/out/PromptPetalWidget.msix
+          $p = Get-AppxPackage -Name LittleBirdTrading.PromptPetalWidget
+          if (-not $p) { throw "The widget package is not registered after Add-AppxPackage" }
+          Write-Host "registered: $($p.PackageFullName) at $($p.InstallLocation)"
+          $manifest = Get-AppxPackageManifest $p
+          $xml = $manifest.OuterXml
+          $xml | Out-File artifacts/installed-manifest.xml
+          if ($xml -notmatch 'com\.microsoft\.windows\.widgets') { throw "The installed manifest has no Widgets app extension" }
+          if ($xml -notmatch $env:CLSID) { throw "The installed manifest does not declare the provider's COM class $env:CLSID" }
+          Write-Host "The Widgets extension and COM class $env:CLSID are registered."
+          "location=$($p.InstallLocation)" >> $env:GITHUB_ENV
+
+      - name: The COM class activates out of process from the installed package
+        shell: pwsh
+        run: |
+          $type = [Type]::GetTypeFromCLSID([Guid]$env:CLSID)
+          $obj = $null
+          try { $obj = [Activator]::CreateInstance($type) } catch { Write-Host "CreateInstance: $($_.Exception.Message)" }
+          Start-Sleep -Seconds 2
+          $server = Get-Process -Name PromptPetal.WidgetProvider -EA SilentlyContinue | Select-Object -First 1
+          if (-not $server) { throw "Activating CLSID $env:CLSID started no PromptPetal.WidgetProvider process" }
+          Write-Host "COM server running: $($server.Path)"
+          if (-not $server.Path.StartsWith($env:location, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "The COM server ran from $($server.Path), not from the installed package at $env:location"
+          }
+          if ($obj -eq $null) { Write-Host "::warning::The server started from the package, but no object came back to this client (expected when the class is WinRT-only)." }
+          Write-Host "The provider activated out of process from the installed package."
+
+      # ── The card the board is handed ───────────────────────────────────────
+      - name: The card carries the real petals, and the Pro and empty states
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:location "PromptPetal.WidgetProvider.exe"
+          $root = "$env:RUNNER_TEMP\widget-cards"
+          $pro = '{"source":"lifetime","updatedAt":"2026-09-26T00:00:00Z"}'
+          $board = '[{"id":"00000000-0000-0000-0000-000000000001","name":"General","isDefault":true}]'
+          $petals = '[{"id":"' + $env:RESEARCH_ID + '","boardID":"00000000-0000-0000-0000-000000000001","name":"Research","template":"Research the following thoroughly","slot":0,"isEnabled":true,"actionType":"insert_template"},{"id":"11111111-2222-3333-4444-555555555555","boardID":"00000000-0000-0000-0000-000000000001","name":"Tighten","template":"Tighten this","slot":1,"isEnabled":true,"actionType":"insert_template"}]'
+          if ("${{ inputs.break_mode }}" -eq "empty_card") {
+            $petals = '[]'
+            Write-Host "::warning::The Pro store has no petals ON PURPOSE. The Pro card assertion MUST fail."
+          }
+          function Card($name, $entitlement, $petalsJson) {
+            $home = "$root\$name"; New-Item -ItemType Directory -Force $home, "$root\$name-out" | Out-Null
+            if ($entitlement) { Set-Content "$home\entitlement.json" $entitlement -Encoding utf8 }
+            Set-Content "$home\boards.json" $board -Encoding utf8
+            Set-Content "$home\petals.json" $petalsJson -Encoding utf8
+            $env:PROMPTPETAL_HOME = $home
+            & $exe --card "$root\$name-out"
+            if ($LASTEXITCODE -ne 0) { throw "--card exited $LASTEXITCODE for $name" }
+            $data = Get-Content "$root\$name-out\data.json" -Raw
+            Copy-Item "$root\$name-out\data.json" "artifacts/card-$name-data.json"
+            Copy-Item "$root\$name-out\template.json" "artifacts/card-template.json" -Force
+            Write-Host "$name data: $data"
+            return $data
+          }
+          $d = Card "pro" $pro $petals
+          if ($d -notmatch 'Research' -or $d -notmatch 'Tighten' -or $d -notmatch $env:RESEARCH_ID) { throw "The Pro card does not carry the petals from petals.json" }
+          $d = Card "free" $null $petals
+          if ($d -match 'Research') { throw "The Free card shows petals; widgets are Pro" }
+          $d = Card "pro-empty" $pro '[]'
+          if ($d -match 'Research') { throw "The empty card shows a petal that is not in the store" }
+          Remove-Item Env:PROMPTPETAL_HOME
+          Write-Host "Pro shows the petals, Free shows the Pro line, an empty store shows no petals."
+
+      # ── Build the app with the MSIX inside, install it, and tap a petal ─────
+      - name: Build the EXE (with the widget package bundled)
+        working-directory: desktop
+        shell: pwsh
+        run: ./gradlew.bat packageExe --no-daemon "-Pchannel=website"
+
+      - name: Install the EXE silently
+        id: app
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path desktop/build/compose/binaries -Recurse -Filter *.exe | Select-Object -First 1
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList '/quiet' -PassThru -Wait
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "Silent install failed with exit code $($p.ExitCode)" }
+          $roots = @("$env:LOCALAPPDATA\$env:APP_NAME", "$env:ProgramFiles\$env:APP_NAME") | Where-Object { Test-Path $_ }
+          $app = $null
+          foreach ($r in $roots) { $app = Get-ChildItem $r -Recurse -Filter '*.exe' | Where-Object { $_.Name -notlike 'unins*' } | Select-Object -First 1; if ($app) { break } }
+          if (-not $app) { throw "Installed app not found" }
+          $bundled = Get-ChildItem (Split-Path $app.FullName) -Recurse -Filter PromptPetalWidget.msix -EA SilentlyContinue | Select-Object -First 1
+          $jar = Get-ChildItem (Split-Path $app.FullName) -Recurse -Filter *.jar -EA SilentlyContinue |
+                 Where-Object { (& jar tf $_.FullName 2>$null) -match 'PromptPetalWidget\.msix' } | Select-Object -First 1
+          if (-not $bundled -and -not $jar) { throw "The installed app does not carry PromptPetalWidget.msix" }
+          Write-Host "the installed app carries the widget package: $(if ($bundled) { $bundled.FullName } else { $jar.FullName })"
+          "exe=$($app.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: A tap on a petal lands its words in Notepad
+        shell: pwsh
+        run: ./ci/scripts/verify-widget-tap.ps1 -AppExe "${{ steps.app.outputs.exe }}" -ProviderExe (Join-Path $env:location "PromptPetal.WidgetProvider.exe") -PetalId $env:RESEARCH_ID -OutDir artifacts
+
+      - name: Screenshot the desktop
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("artifacts/desktop.png")
+
+      - name: Collect the logs
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Get-WinEvent -LogName Application -MaxEvents 80 -EA SilentlyContinue |
+            Where-Object { $_.Message -match 'Prompt Petal|PromptPetal|AppX|\.NET|COM' } |
+            Format-List TimeCreated, Id, LevelDisplayName, Message | Out-File artifacts/application-log.txt
+          Get-WinEvent -LogName Microsoft-Windows-AppXDeploymentServer/Operational -MaxEvents 40 -EA SilentlyContinue |
+            Format-List TimeCreated, Id, Message | Out-File artifacts/appx-deployment-log.txt
+          if (Test-Path "$env:APPDATA\PromptPetal\last-error.txt") { Copy-Item "$env:APPDATA\PromptPetal\last-error.txt" artifacts/ }
+          if (Test-Path desktop/widget/out/PromptPetalWidget.msix) { Copy-Item desktop/widget/out/PromptPetalWidget.msix artifacts/ }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: widget-verification-${{ steps.src.outputs.sha }}
+          path: artifacts
