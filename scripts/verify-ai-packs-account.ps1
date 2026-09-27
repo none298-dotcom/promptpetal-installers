@@ -58,15 +58,16 @@ public class UiTest {
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
   const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004;
 
-  // Every visible top level window owned by exactly this process id. Never a folder scan:
-  // this script runs a second copy of the same exe the first instance is already running,
-  // so two different processes share one path and a title check cannot tell them apart.
-  public static Dictionary<IntPtr, Rect> WindowsOf(uint pid) {
+  // Every visible top level window owned by one of these process ids. A set rather than
+  // one id: jpackage's launcher exe is not always the process that owns the window (a
+  // child JVM process often is), the same reason assert-app-window.ps1 looks across every
+  // process from the install folder instead of trusting the one Start-Process handed back.
+  public static Dictionary<IntPtr, Rect> WindowsOf(HashSet<uint> pids) {
     var found = new Dictionary<IntPtr, Rect>();
     EnumWindows((h, l) => {
       if (IsWindowVisible(h)) {
         uint owner; GetWindowThreadProcessId(h, out owner);
-        if (owner == pid) { Rect r; if (GetWindowRect(h, out r)) found[h] = r; }
+        if (pids.Contains(owner)) { Rect r; if (GetWindowRect(h, out r)) found[h] = r; }
       }
       return true;
     }, IntPtr.Zero);
@@ -131,10 +132,26 @@ $env:PROMPTPETAL_AI_BASE = $AiBase
 $env:PROMPTPETAL_DEBUG = "1"
 Remove-Item (Join-Path $HomeDir "debug-state.json") -ErrorAction SilentlyContinue
 
+$folder = Split-Path -Parent $ExePath
+function Folder-Pids {
+  [uint32[]](Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase) } |
+    ForEach-Object { $_.Id })
+}
+# The certification instance launched earlier in this job is still running from this same
+# folder. Ours is whatever NEW pid appears after Start-Process: the launcher exe, and a
+# child JVM process if jpackage spawns one, since that is sometimes the one that ends up
+# owning the window rather than the launcher.
+$pidsBefore = [System.Collections.Generic.HashSet[uint32]]::new([uint32[]](Folder-Pids))
 $app = Start-Process -FilePath $ExePath -PassThru
 $deadline = (Get-Date).AddSeconds(30)
-while ($app.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400; $app.Refresh() }
-if ($app.HasExited) { throw "The Ask AI / Packs / account test instance exited with $($app.ExitCode) before it showed a window" }
+$testPids = [System.Collections.Generic.HashSet[uint32]]::new()
+while ($testPids.Count -eq 0 -and (Get-Date) -lt $deadline) {
+  Start-Sleep -Milliseconds 400
+  foreach ($p in (Folder-Pids)) { if (-not $pidsBefore.Contains($p)) { [void]$testPids.Add($p) } }
+}
+if ($app.HasExited -and $testPids.Count -eq 0) { throw "The Ask AI / Packs / account test instance exited with $($app.ExitCode) before it showed a window" }
+if ($testPids.Count -eq 0) { throw "No new process from $folder appeared after launching the test instance" }
+Write-Host "test instance pids: $($testPids -join ', ')"
 
 # ── Notepad, with real typing, the way the certifier's own script gets a target to paste into ──
 #
@@ -165,9 +182,9 @@ if ([UiTest]::NotepadText($notepad.MainWindowHandle) -notlike "*Before Ask AI*")
 }
 
 # ── Find our own instance's window (never the other Prompt Petal already running) ──
-$windows = [UiTest]::WindowsOf([uint32]$app.Id)
+$windows = [UiTest]::WindowsOf($testPids)
 $main = $windows.GetEnumerator() | Where-Object { [UiTest]::TitleOf($_.Key) -like "*$env:APP_NAME*" } | Select-Object -First 1
-if (-not $main) { throw "No window belonging to pid $($app.Id) is titled '$env:APP_NAME'" }
+if (-not $main) { throw "No window belonging to test pids $($testPids -join ', ') is titled '$env:APP_NAME'" }
 $rect = $main.Value
 Write-Host "test instance window: $($rect.Left),$($rect.Top) - $($rect.Right),$($rect.Bottom)"
 Save-Screen "uitest-petals-tab.png" | Out-Null
@@ -184,7 +201,7 @@ $deadline = (Get-Date).AddSeconds(6)
 $ring = $null
 while (-not $ring -and (Get-Date) -lt $deadline) {
   Start-Sleep -Milliseconds 300
-  $after = [UiTest]::WindowsOf([uint32]$app.Id)
+  $after = [UiTest]::WindowsOf($testPids)
   $ring = $after.GetEnumerator() | Where-Object { -not $windows.ContainsKey($_.Key) } | Select-Object -First 1
 }
 if (-not $ring) { Save-Screen "uitest-no-ring.png" | Out-Null; throw "Clicking Open Petals did not open a ring" }
