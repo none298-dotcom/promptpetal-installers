@@ -273,6 +273,9 @@ Save-Screen "uitest-ask-ai-after.png" | Out-Null
 
 Write-Host "Notepad now reads: $notepadText"
 if ($notepadText -notlike "*$ExpectedAnswer*") {
+  $debugFile = Join-Path $HomeDir "debug-state.json"
+  if (Test-Path $debugFile) { Write-Host "debug-state.json: $(Get-Content $debugFile -Raw)" }
+  else { Write-Host "debug-state.json was never written for this click" }
   Write-Host "::error::Ask AI FAILED. Notepad has no '$ExpectedAnswer'. See uitest-ask-ai-after.png."
   exit 1
 }
