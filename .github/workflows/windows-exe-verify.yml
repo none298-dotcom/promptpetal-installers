@@ -38,6 +38,9 @@ on:
           - none
           - remove_arp_entry   # delete the uninstall key after install, must fail 10.2.7
           - wrong_vendor       # name a company the certificate does not, must fail 10.3.4
+          - wrong_ai_answer    # the AI stand-in returns a different answer, Ask AI must fail
+          - skip_packs_add     # never click Add, the packs-on-disk check must fail
+          - skip_account_click # never click General, the account-panel check must fail
       wait_seconds:
         description: "How long to let the installed app run before judging it"
         default: "40"
@@ -407,6 +410,93 @@ jobs:
       - name: Open Petals from the window types into Notepad, not into Prompt Petal
         shell: pwsh
         run: ./ci/scripts/verify-open-petals-from-window.ps1 -ExePath "${{ steps.launch.outputs.exe }}" -OutDir artifacts
+
+      # ── Ask AI, Packs, and the account panel ─────────────────────────────────────
+      #
+      # A second, independent instance of the same installed exe (PROMPTPETAL_HOME of its
+      # own), never the one certification just checked above, so nothing here can be
+      # mistaken for that instance's ring or its own petals.
+      - name: Start a stand-in AI server
+        id: aistub
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\ai-stub-requests.log"
+          $stop = "$env:RUNNER_TEMP\ai-stub-stop"
+          # wrong_ai_answer proves the Ask AI check actually reads the answer, rather than
+          # only checking that Notepad's text changed: the stand-in answers with something
+          # else, and the same assertion, unchanged, must now fail.
+          $answer = if ("${{ inputs.break_mode }}" -eq "wrong_ai_answer") { "WRONG STAND-IN ANSWER, this must fail Ask AI" } else { "PROMPTPETAL_STUB_ANSWER 19a7e6" }
+          # One string, not an array: Start-Process's own quoting of an array is not to be
+          # trusted with values that have spaces in them, and $answer does.
+          $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"ci\scripts\ai-stub-server.ps1`" -Port 8791 -AnswerText `"$answer`" -LogPath `"$log`" -StopFile `"$stop`""
+          $proc = Start-Process powershell -ArgumentList $argLine -WindowStyle Hidden -PassThru
+          Start-Sleep -Seconds 2
+          "answer=$answer" >> $env:GITHUB_OUTPUT
+          "log=$log" >> $env:GITHUB_OUTPUT
+          "stop=$stop" >> $env:GITHUB_OUTPUT
+          "pid=$($proc.Id)" >> $env:GITHUB_OUTPUT
+
+      - name: Seed a Pro test profile with an Ask AI petal and a saved dummy key
+        id: seed
+        shell: pwsh
+        run: |
+          $testHome = "$env:RUNNER_TEMP\promptpetal-uitest"
+          New-Item -ItemType Directory -Force $testHome | Out-Null
+          '{"source":"lifetime","updatedAt":"2026-09-27T00:00:00Z"}' |
+            Set-Content "$testHome\entitlement.json" -Encoding utf8
+          '{"aiProvider":"anthropic","aiModel":"claude-sonnet-5"}' |
+            Set-Content "$testHome\settings.json" -Encoding utf8
+
+          # One Ask AI petal at the top of the ring plus four plain ones, so the ring is the
+          # same five-petal shape verify-open-petals-from-window.ps1 already proved the
+          # click geometry against, rather than a new shape nobody has measured.
+          $board = "2FA37340-4F2C-4F2C-B9CE-0F97732589DE"
+          $petals = @(
+            @{ id = "AAAA0001-0000-0000-0000-000000000001"; boardID = $board; name = "Ask AI Test"
+               template = "Say hello in exactly five words."; isEnabled = $true; slot = 0
+               actionType = "ai_transform"; iconSystemName = "sparkles" },
+            @{ id = "AAAA0001-0000-0000-0000-000000000002"; boardID = $board; name = "Dummy One"
+               template = "Dummy one {{selection}}"; isEnabled = $true; slot = 1; actionType = "insert_template"; iconSystemName = "circle" },
+            @{ id = "AAAA0001-0000-0000-0000-000000000003"; boardID = $board; name = "Dummy Two"
+               template = "Dummy two {{selection}}"; isEnabled = $true; slot = 2; actionType = "insert_template"; iconSystemName = "circle" },
+            @{ id = "AAAA0001-0000-0000-0000-000000000004"; boardID = $board; name = "Dummy Three"
+               template = "Dummy three {{selection}}"; isEnabled = $true; slot = 3; actionType = "insert_template"; iconSystemName = "circle" },
+            @{ id = "AAAA0001-0000-0000-0000-000000000005"; boardID = $board; name = "Dummy Four"
+               template = "Dummy four {{selection}}"; isEnabled = $true; slot = 4; actionType = "insert_template"; iconSystemName = "circle" }
+          )
+          $petals | ConvertTo-Json -Depth 5 | Set-Content "$testHome\petals.json" -Encoding utf8
+
+          # Sealed exactly the way WindowsKeyStore seals a real key (DPAPI, CurrentUser), so
+          # the app finds it where it looks rather than through a shortcut this test invented.
+          $env:PP_VALUE = "sk-ant-test-dummy-key-not-real"
+          $sealed = powershell -NoProfile -NonInteractive -Command "Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes(`$env:PP_VALUE), `$null, 'CurrentUser'))"
+          if (-not $sealed) { throw "Could not seal the test AI key with DPAPI" }
+          Set-Content "$testHome\secret-aianthropic.dpapi" $sealed -Encoding utf8
+          "home=$testHome" >> $env:GITHUB_OUTPUT
+
+      - name: Ask AI, Packs Add, and the account panel, clicked by hand
+        shell: pwsh
+        run: |
+          ./ci/scripts/verify-ai-packs-account.ps1 `
+            -ExePath "${{ steps.launch.outputs.exe }}" `
+            -HomeDir "${{ steps.seed.outputs.home }}" `
+            -AiBase "http://127.0.0.1:8791" `
+            -AiStubLogPath "${{ steps.aistub.outputs.log }}" `
+            -ExpectedAnswer "${{ steps.aistub.outputs.answer }}" `
+            -BreakMode "${{ inputs.break_mode }}" `
+            -OutDir artifacts
+
+      - name: Stop the stand-in AI server
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType File -Force "${{ steps.aistub.outputs.stop }}" | Out-Null
+          Start-Sleep -Seconds 2
+          Stop-Process -Id ${{ steps.aistub.outputs.pid }} -Force -ErrorAction SilentlyContinue
+          if (Test-Path "${{ steps.aistub.outputs.log }}") { Copy-Item "${{ steps.aistub.outputs.log }}" artifacts/ai-stub-requests.txt }
+          $debugState = "$env:RUNNER_TEMP\promptpetal-uitest\debug-state.json"
+          if (Test-Path $debugState) { Copy-Item $debugState artifacts/uitest-debug-state.txt }
 
       - name: Screenshot the desktop
         if: always()
