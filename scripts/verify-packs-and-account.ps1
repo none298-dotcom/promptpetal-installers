@@ -188,8 +188,18 @@ if ($testPids.Count -eq 0) { throw "No new process from $folder appeared after l
 Write-Host "test instance pids: $($testPids -join ', ')"
 
 # ── Find our own instance's window (never the other Prompt Petal already running) ──
-$windows = [UiTest]::WindowsOf($testPids)
-$main = $windows.GetEnumerator() | Where-Object { [UiTest]::TitleOf($_.Key) -like "*$env:APP_NAME*" } | Select-Object -First 1
+#
+# Polled rather than trusted on the first look: the pid appears (Folder-Pids sees the new
+# process) before its window necessarily does, and without a target to type or paste into
+# to burn a few seconds first (the way Ask AI's own Notepad setup used to, before it was
+# dropped), the very first check here can run before the window has shown itself at all.
+$main = $null
+$deadline = (Get-Date).AddSeconds(20)
+while (-not $main -and (Get-Date) -lt $deadline) {
+  Start-Sleep -Milliseconds 400
+  $windows = [UiTest]::WindowsOf($testPids)
+  $main = $windows.GetEnumerator() | Where-Object { [UiTest]::TitleOf($_.Key) -like "*$env:APP_NAME*" } | Select-Object -First 1
+}
 if (-not $main) { throw "No window belonging to test pids $($testPids -join ', ') is titled '$env:APP_NAME'" }
 $rect = $main.Value
 Write-Host "test instance window: $($rect.Left),$($rect.Top) - $($rect.Right),$($rect.Bottom)"
