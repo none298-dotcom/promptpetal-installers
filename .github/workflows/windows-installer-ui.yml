@@ -1,7 +1,8 @@
 # What a person sees while the Windows installer runs, pictured. The installer is jpackage's
 # MSI inside an EXE with no dialogs of its own, so Windows should draw only its own progress
 # window, in the person's own Windows language. This proves it on screen, installing
-# interactively (not /quiet) with Windows set to German, and saves pictures every second.
+# interactively (not /quiet) and saves a picture every 0.7 seconds. Any window it shows that
+# is not Windows' own would need translating.
 name: windows-installer-ui
 on:
   workflow_dispatch:
@@ -28,12 +29,9 @@ jobs:
         working-directory: desktop
         shell: pwsh
         run: ./gradlew.bat packageExe --no-daemon
-      - name: Windows in German, then install with the normal UI and take pictures
+      - name: Install with the normal UI and take pictures
         shell: pwsh
         run: |
-          Set-WinUILanguageOverride -Language de-DE
-          Set-WinUserLanguageList -LanguageList de-DE -Force
-          Set-Culture de-DE
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch {}
           New-Item -ItemType Directory -Force artifacts | Out-Null
