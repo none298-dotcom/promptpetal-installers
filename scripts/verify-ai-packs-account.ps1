@@ -245,10 +245,19 @@ $half = ($ringRect.Bottom - $ringRect.Top) / 2
 $petalOffset = [int]($half * 0.5)
 Write-Host "ring window: $($ringRect.Left),$($ringRect.Top) - $($ringRect.Right),$($ringRect.Bottom), clicking the Ask AI petal at $centerX, $($centerY - $petalOffset)"
 [UiTest]::ClickAt($centerX, $centerY - $petalOffset)
-Start-Sleep -Milliseconds 2500
+
+# askAI() runs the request on a background thread and pastes only once it comes back, so
+# this polls rather than trusting one fixed pause: a screenshot from a run that used a flat
+# 2.5s wait caught the app still mid-request, a small loading flower still on the tab bar.
+$notepadText = $null
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-Date) -lt $deadline) {
+  Start-Sleep -Milliseconds 500
+  $notepadText = [UiTest]::NotepadText($notepad.MainWindowHandle)
+  if ($notepadText -like "*$ExpectedAnswer*") { break }
+}
 Save-Screen "uitest-ask-ai-after.png" | Out-Null
 
-$notepadText = [UiTest]::NotepadText($notepad.MainWindowHandle)
 Write-Host "Notepad now reads: $notepadText"
 if ($notepadText -notlike "*$ExpectedAnswer*") {
   Write-Host "::error::Ask AI FAILED. Notepad has no '$ExpectedAnswer'. See uitest-ask-ai-after.png."
