@@ -444,7 +444,11 @@ jobs:
           New-Item -ItemType Directory -Force $testHome | Out-Null
           '{"source":"lifetime","updatedAt":"2026-09-27T00:00:00Z"}' |
             Set-Content "$testHome\entitlement.json" -Encoding utf8
-          '{"aiProvider":"anthropic","aiModel":"claude-sonnet-5"}' |
+          # whatsNewDontShow, so a fresh profile does not open on the "What's New" pop up
+          # instead of the window this script means to click: seeding petals.json and
+          # settings.json already makes AppState.isFirstRun false, so without this the pop
+          # up for the current version shows on top of everything below.
+          '{"aiProvider":"anthropic","aiModel":"claude-sonnet-5","whatsNewDontShow":true}' |
             Set-Content "$testHome\settings.json" -Encoding utf8
 
           # One Ask AI petal at the top of the ring plus four plain ones, so the ring is the
