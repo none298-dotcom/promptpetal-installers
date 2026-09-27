@@ -429,8 +429,32 @@ jobs:
           # One string, not an array: Start-Process's own quoting of an array is not to be
           # trusted with values that have spaces in them, and $answer does.
           $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"ci\scripts\ai-stub-server.ps1`" -Port 8791 -AnswerText `"$answer`" -LogPath `"$log`" -StopFile `"$stop`""
-          $proc = Start-Process powershell -ArgumentList $argLine -WindowStyle Hidden -PassThru
-          Start-Sleep -Seconds 2
+          # Its own stdout/stderr redirected to files: Start-Process -WindowStyle Hidden
+          # gives this step nothing of the child's console either way, so without this a
+          # stub that failed to bind, or threw before its first Write-Host, fails silent.
+          $stubOut = "$env:RUNNER_TEMP\ai-stub-stdout.txt"
+          $stubErr = "$env:RUNNER_TEMP\ai-stub-stderr.txt"
+          $proc = Start-Process powershell -ArgumentList $argLine -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $stubOut -RedirectStandardError $stubErr
+
+          # Proven to actually answer before anything else in this job depends on it.
+          $ready = $false
+          $deadline = (Get-Date).AddSeconds(15)
+          while (-not $ready -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            try {
+              $probe = Invoke-WebRequest -Uri "http://127.0.0.1:8791/" -Method Post -Body "{}" -ContentType "application/json" -UseBasicParsing -TimeoutSec 2
+              if ($probe.StatusCode -eq 200) { $ready = $true }
+            } catch { }
+          }
+          Write-Host "--- stub stdout ---"; Get-Content $stubOut -ErrorAction SilentlyContinue | Write-Host
+          Write-Host "--- stub stderr ---"; Get-Content $stubErr -ErrorAction SilentlyContinue | Write-Host
+          if (-not $ready) { throw "The stand-in AI server on 8791 never answered a probe request; see stdout/stderr above." }
+          Write-Host "stand-in AI server is answering on 8791"
+          # The probe above is itself a request the stub logs; clear it so the real check
+          # later counts only what the app itself sent.
+          Remove-Item $log -ErrorAction SilentlyContinue
+
           "answer=$answer" >> $env:GITHUB_OUTPUT
           "log=$log" >> $env:GITHUB_OUTPUT
           "stop=$stop" >> $env:GITHUB_OUTPUT
@@ -494,6 +518,8 @@ jobs:
           Start-Sleep -Seconds 2
           Stop-Process -Id ${{ steps.aistub.outputs.pid }} -Force -ErrorAction SilentlyContinue
           if (Test-Path "${{ steps.aistub.outputs.log }}") { Copy-Item "${{ steps.aistub.outputs.log }}" artifacts/ai-stub-requests.txt }
+          if (Test-Path "$env:RUNNER_TEMP\ai-stub-stdout.txt") { Copy-Item "$env:RUNNER_TEMP\ai-stub-stdout.txt" artifacts/ai-stub-stdout.txt }
+          if (Test-Path "$env:RUNNER_TEMP\ai-stub-stderr.txt") { Copy-Item "$env:RUNNER_TEMP\ai-stub-stderr.txt" artifacts/ai-stub-stderr.txt }
           $debugState = "$env:RUNNER_TEMP\promptpetal-uitest\debug-state.json"
           if (Test-Path $debugState) { Copy-Item $debugState artifacts/uitest-debug-state.txt }
 
