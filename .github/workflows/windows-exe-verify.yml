@@ -451,24 +451,19 @@ jobs:
           '{"aiProvider":"anthropic","aiModel":"claude-sonnet-5","whatsNewDontShow":true}' |
             Set-Content "$testHome\settings.json" -Encoding utf8
 
-          # One Ask AI petal at the top of the ring plus four plain ones, so the ring is the
-          # same five-petal shape verify-open-petals-from-window.ps1 already proved the
-          # click geometry against, rather than a new shape nobody has measured.
+          # One petal, nothing else: Petal.isWorkflow is true for "ai_transform" (it is not
+          # in PROMPT_ACTIONS), so an Ask AI petal sits with the workflows rather than the
+          # plain prompts, and a mix of the two reorders the ring so prompts come first,
+          # which is why an earlier run's click on slot 0's own angle landed on a plain
+          # petal instead. One petal removes the reordering question entirely: whatever
+          # this ring's own angle for a single petal is, it is the only wedge there is.
           $board = "2FA37340-4F2C-4F2C-B9CE-0F97732589DE"
           $petals = @(
             @{ id = "AAAA0001-0000-0000-0000-000000000001"; boardID = $board; name = "Ask AI Test"
                template = "Say hello in exactly five words."; isEnabled = $true; slot = 0
-               actionType = "ai_transform"; iconSystemName = "sparkles" },
-            @{ id = "AAAA0001-0000-0000-0000-000000000002"; boardID = $board; name = "Dummy One"
-               template = "Dummy one {{selection}}"; isEnabled = $true; slot = 1; actionType = "insert_template"; iconSystemName = "circle" },
-            @{ id = "AAAA0001-0000-0000-0000-000000000003"; boardID = $board; name = "Dummy Two"
-               template = "Dummy two {{selection}}"; isEnabled = $true; slot = 2; actionType = "insert_template"; iconSystemName = "circle" },
-            @{ id = "AAAA0001-0000-0000-0000-000000000004"; boardID = $board; name = "Dummy Three"
-               template = "Dummy three {{selection}}"; isEnabled = $true; slot = 3; actionType = "insert_template"; iconSystemName = "circle" },
-            @{ id = "AAAA0001-0000-0000-0000-000000000005"; boardID = $board; name = "Dummy Four"
-               template = "Dummy four {{selection}}"; isEnabled = $true; slot = 4; actionType = "insert_template"; iconSystemName = "circle" }
+               actionType = "ai_transform"; iconSystemName = "sparkles" }
           )
-          $petals | ConvertTo-Json -Depth 5 | Set-Content "$testHome\petals.json" -Encoding utf8
+          $petals | ConvertTo-Json -Depth 5 -AsArray | Set-Content "$testHome\petals.json" -Encoding utf8
 
           # Sealed exactly the way WindowsKeyStore seals a real key (DPAPI, CurrentUser), so
           # the app finds it where it looks rather than through a shortcut this test invented.
