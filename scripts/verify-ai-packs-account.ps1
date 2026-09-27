@@ -258,11 +258,32 @@ $centerX = [int](($ringRect.Left + $ringRect.Right) / 2)
 $centerY = [int](($ringRect.Top + $ringRect.Bottom) / 2)
 # A fraction of this ring's own half height, not a fixed pixel count: outside the hub's
 # dead zone and inside slot 0's wedge whatever this ring's actual radius turns out to be,
-# since the wedge test is angle only (RadialGeometry.slot), never distance.
+# since the wedge test is angle only (RadialGeometry.slot), never distance. With exactly
+# one petal on this board, ringPickSlot has exactly one candidate to resolve to regardless
+# of which direction the click comes from, so several points are tried rather than one:
+# whichever one this ring is actually drawn at, one of these should land past its own hub
+# dead zone and inside its wedge.
 $half = ($ringRect.Bottom - $ringRect.Top) / 2
-$petalOffset = [int]($half * 0.5)
-Write-Host "ring window: $($ringRect.Left),$($ringRect.Top) - $($ringRect.Right),$($ringRect.Bottom), clicking the Ask AI petal at $centerX, $($centerY - $petalOffset)"
-[UiTest]::ClickAt($centerX, $centerY - $petalOffset)
+$near = [int]($half * 0.3)
+$far = [int]($half * 0.6)
+$debugFile = Join-Path $HomeDir "debug-state.json"
+$candidates = @(
+  @{ Name = "up-far"; X = $centerX; Y = $centerY - $far },
+  @{ Name = "down-far"; X = $centerX; Y = $centerY + $far },
+  @{ Name = "left-far"; X = $centerX - $far; Y = $centerY },
+  @{ Name = "right-far"; X = $centerX + $far; Y = $centerY },
+  @{ Name = "up-near"; X = $centerX; Y = $centerY - $near },
+  @{ Name = "down-near"; X = $centerX; Y = $centerY + $near },
+  @{ Name = "left-near"; X = $centerX - $near; Y = $centerY },
+  @{ Name = "right-near"; X = $centerX + $near; Y = $centerY }
+)
+Write-Host "ring window: $($ringRect.Left),$($ringRect.Top) - $($ringRect.Right),$($ringRect.Bottom), center $centerX,$centerY"
+foreach ($c in $candidates) {
+  if (Test-Path $debugFile) { break }
+  Write-Host "trying the Ask AI petal at $($c.Name): $($c.X), $($c.Y)"
+  [UiTest]::ClickAt($c.X, $c.Y)
+  Start-Sleep -Milliseconds 900
+}
 
 # askAI() runs the request on a background thread and pastes only once it comes back, so
 # this polls rather than trusting one fixed pause: a screenshot from a run that used a flat
