@@ -136,10 +136,29 @@ function Save-Screen([string]$name) {
 
 # Accent, the app's own orange (MainScreen.kt's `Accent`), read back off a live screenshot
 # rather than typed in twice: the one place it is a literal is Save-Screen's own capture.
+# The catalogue can show several packs, each with its own Add button in the same Accent
+# colour, stacked one under another. A single min/max box across every matching pixel
+# averages all of them into one point that sits in the gap between two rows and belongs to
+# neither (measured once: three buttons at y=399, 496 and 593 produced a "centre" at
+# y=440, which is blank space). So this finds the TOPMOST row of matching pixels only,
+# by first finding the lowest matching y and then bounding just the pixels within one
+# button's height of it, and always picks the first pack in the list.
 function Find-Accent([System.Drawing.Bitmap]$bmp, [int]$left, [int]$top, [int]$right, [int]$bottom) {
   $tr = 217; $tg = 116; $tb = 31; $tol = 24
+  $topY = -1
+  for ($y = $top; $y -lt $bottom -and $topY -lt 0; $y += 2) {
+    for ($x = $left; $x -lt $right; $x += 2) {
+      $c = $bmp.GetPixel($x, $y)
+      if ([Math]::Abs([int]$c.R - $tr) -lt $tol -and [Math]::Abs([int]$c.G - $tg) -lt $tol -and [Math]::Abs([int]$c.B - $tb) -lt $tol) {
+        $topY = $y
+        break
+      }
+    }
+  }
+  if ($topY -lt 0) { return $null }
+  $bandBottom = [Math]::Min($bottom, $topY + 40)
   $minX = -1; $maxX = -1; $minY = -1; $maxY = -1
-  for ($y = $top; $y -lt $bottom; $y += 2) {
+  for ($y = $topY; $y -lt $bandBottom; $y += 2) {
     for ($x = $left; $x -lt $right; $x += 2) {
       $c = $bmp.GetPixel($x, $y)
       if ([Math]::Abs([int]$c.R - $tr) -lt $tol -and [Math]::Abs([int]$c.G - $tg) -lt $tol -and [Math]::Abs([int]$c.B - $tb) -lt $tol) {
@@ -150,7 +169,6 @@ function Find-Accent([System.Drawing.Bitmap]$bmp, [int]$left, [int]$top, [int]$r
       }
     }
   }
-  if ($minX -lt 0) { return $null }
   return @{ X = [int](($minX + $maxX) / 2); Y = [int](($minY + $maxY) / 2) }
 }
 
