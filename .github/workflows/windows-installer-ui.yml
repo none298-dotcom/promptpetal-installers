@@ -1,0 +1,54 @@
+# What a person sees while the Windows installer runs, pictured. The installer is jpackage's
+# MSI inside an EXE with no dialogs of its own, so Windows should draw only its own progress
+# window, in the person's own Windows language. This proves it on screen, installing
+# interactively (not /quiet) with Windows set to German, and saves pictures every second.
+name: windows-installer-ui
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or sha of the private source to build"
+        default: main
+permissions:
+  contents: read
+jobs:
+  look:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build the EXE
+        working-directory: desktop
+        shell: pwsh
+        run: ./gradlew.bat packageExe --no-daemon
+      - name: Windows in German, then install with the normal UI and take pictures
+        shell: pwsh
+        run: |
+          Set-WinUILanguageOverride -Language de-DE
+          Set-WinUserLanguageList -LanguageList de-DE -Force
+          Set-Culture de-DE
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch {}
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $exe = (Get-ChildItem desktop/build/compose/binaries -Recurse -Filter *.exe | Select-Object -First 1).FullName
+          $p = Start-Process -FilePath $exe -PassThru
+          for ($i = 0; $i -lt 40 -and -not $p.HasExited; $i++) {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("artifacts/installer-$('{0:D2}' -f $i).png")
+            Start-Sleep -Milliseconds 700
+          }
+          Write-Host "installer exited: $($p.HasExited) code $($p.ExitCode)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-ui
+          path: artifacts
