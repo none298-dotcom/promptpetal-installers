@@ -106,6 +106,13 @@ public class UiTest {
     SetForegroundWindow(hwnd);
   }
 
+  public static void PressEscape() {
+    const byte VK_ESCAPE = 0x1B;
+    const uint KEYUP = 0x0002;
+    keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_ESCAPE, 0, KEYUP, UIntPtr.Zero);
+  }
+
   public static string NotepadText(IntPtr notepadWindow) {
     IntPtr edit = FindWindowEx(notepadWindow, IntPtr.Zero, "Edit", null);
     if (edit == IntPtr.Zero) return null;
@@ -294,14 +301,23 @@ foreach ($c in $candidates) {
 # askAI() runs the request on a background thread and pastes only once it comes back, so
 # this polls rather than trusting one fixed pause: a screenshot from a run that used a flat
 # 2.5s wait caught the app still mid-request, a small loading flower still on the tab bar.
+# AIClient.kt's own HttpRequest carries a 90 second timeout, so this waits long enough to
+# find out whether the request is genuinely stuck rather than merely slow.
 $notepadText = $null
-$deadline = (Get-Date).AddSeconds(15)
+$deadline = (Get-Date).AddSeconds(100)
 while ((Get-Date) -lt $deadline) {
   Start-Sleep -Milliseconds 500
   $notepadText = [UiTest]::NotepadText($notepad.MainWindowHandle)
   if ($notepadText -like "*$ExpectedAnswer*") { break }
 }
 Save-Screen "uitest-ask-ai-after.png" | Out-Null
+
+# Whether or not that landed, the ring must not be left open: none of the eight tries
+# above closing it (as a successful pick always does) is itself evidence something is
+# still wrong with it, and an open ring is a real window sitting over part of the main
+# window underneath, ready to silently eat a click meant for a tab.
+[UiTest]::PressEscape()
+Start-Sleep -Milliseconds 500
 
 Write-Host "Notepad now reads: $notepadText"
 if ($notepadText -notlike "*$ExpectedAnswer*") {
