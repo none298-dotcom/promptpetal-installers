@@ -37,6 +37,12 @@ param(
   [string]$BreakMode = "none"
 )
 $ErrorActionPreference = "Stop"
+# Each of the three checks below is independent of the other two (a different tab, a
+# different click, a different thing read back off disk), so one going wrong must not hide
+# whether the other two still work. Setup that all three depend on (the app launching, a
+# real window to click) still throws and stops the run; only the three checks themselves
+# collect into this instead of exiting on the first one.
+$failures = New-Object System.Collections.Generic.List[string]
 
 Add-Type -TypeDefinition @"
 using System;
@@ -303,19 +309,19 @@ if ($notepadText -notlike "*$ExpectedAnswer*") {
   if (Test-Path $debugFile) { Write-Host "debug-state.json: $(Get-Content $debugFile -Raw)" }
   else { Write-Host "debug-state.json was never written for this click" }
   Write-Host "::error::Ask AI FAILED. Notepad has no '$ExpectedAnswer'. See uitest-ask-ai-after.png."
-  exit 1
-}
-Write-Host "Ask AI ok: the stand-in's answer reached Notepad."
-
-if (-not (Test-Path $AiStubLogPath) -or (Get-Content $AiStubLogPath).Count -eq 0) {
+  $failures.Add("Ask AI: the stand-in's answer never reached Notepad")
+} elseif (-not (Test-Path $AiStubLogPath) -or (Get-Content $AiStubLogPath).Count -eq 0) {
   Write-Host "::error::Ask AI FAILED. The stand-in server logged no request: the app never asked it."
-  exit 1
-}
-Write-Host "stand-in server received:"
-Get-Content $AiStubLogPath | ForEach-Object { Write-Host "  $_" }
-if (-not (Select-String -Path $AiStubLogPath -Pattern "x-api-key=\S")) {
-  Write-Host "::error::Ask AI FAILED. The request the stand-in logged carried no x-api-key, so the saved key never made it into the request."
-  exit 1
+  $failures.Add("Ask AI: the stand-in server logged no request")
+} else {
+  Write-Host "stand-in server received:"
+  Get-Content $AiStubLogPath | ForEach-Object { Write-Host "  $_" }
+  if (-not (Select-String -Path $AiStubLogPath -Pattern "x-api-key=\S")) {
+    Write-Host "::error::Ask AI FAILED. The request the stand-in logged carried no x-api-key, so the saved key never made it into the request."
+    $failures.Add("Ask AI: the request carried no x-api-key")
+  } else {
+    Write-Host "Ask AI ok: the stand-in's answer reached Notepad, with the saved key on the request."
+  }
 }
 
 # ── 2. Packs: click the Packs tab, find Add by its own colour, click it ──
@@ -335,24 +341,26 @@ Write-Host "petals on disk before Add: $before"
 $button = Find-Accent $bmp $rect.Left ($rect.Top + 220) $rect.Right $rect.Bottom
 if (-not $button) {
   Write-Host "::error::PACKS FAILED. No Add button (Accent colour) found below the tab row. See uitest-packs-tab.png: either the catalogue is empty or promptpetal.com could not be reached."
-  exit 1
-}
-Write-Host "Add button found at $($button.X), $($button.Y)"
-if ($BreakMode -ne "skip_packs_add") {
-  [UiTest]::ClickAt($button.X, $button.Y)
+  $failures.Add("Packs: no Add button found (empty catalogue, or promptpetal.com unreachable)")
 } else {
-  Write-Host "::warning::break_mode=skip_packs_add: NOT clicking Add on purpose. The petals-on-disk check below must now fail."
-}
-Start-Sleep -Seconds 6
-Save-Screen "uitest-packs-after.png" | Out-Null
+  Write-Host "Add button found at $($button.X), $($button.Y)"
+  if ($BreakMode -ne "skip_packs_add") {
+    [UiTest]::ClickAt($button.X, $button.Y)
+  } else {
+    Write-Host "::warning::break_mode=skip_packs_add: NOT clicking Add on purpose. The petals-on-disk check below must now fail."
+  }
+  Start-Sleep -Seconds 6
+  Save-Screen "uitest-packs-after.png" | Out-Null
 
-$after = (Get-Content $petalsFile -Raw | ConvertFrom-Json).Count
-Write-Host "petals on disk after Add: $after"
-if ($after -le $before) {
-  Write-Host "::error::PACKS FAILED. Clicking Add did not add anything to $petalsFile ($before petals before, $after after). See uitest-packs-after.png."
-  exit 1
+  $after = (Get-Content $petalsFile -Raw | ConvertFrom-Json).Count
+  Write-Host "petals on disk after Add: $after"
+  if ($after -le $before) {
+    Write-Host "::error::PACKS FAILED. Clicking Add did not add anything to $petalsFile ($before petals before, $after after). See uitest-packs-after.png."
+    $failures.Add("Packs: Add did not add anything to disk")
+  } else {
+    Write-Host "Packs ok: Add put $($after - $before) more petals on disk."
+  }
 }
-Write-Host "Packs ok: Add put $($after - $before) more petals on disk."
 
 # ── 3. The account panel: click General, read it back from the debug dump ──
 [UiTest]::ForceForeground($main.Key)
@@ -369,15 +377,26 @@ Start-Sleep -Seconds 2
 Save-Screen "uitest-general-tab.png" | Out-Null
 
 $debugFile = Join-Path $HomeDir "debug-state.json"
-if (-not (Test-Path $debugFile)) { throw "debug-state.json was never written; PROMPTPETAL_DEBUG did not take" }
-$debugState = Get-Content $debugFile -Raw | ConvertFrom-Json
-Write-Host "debug-state.json: $(Get-Content $debugFile -Raw)"
-if ($debugState.tab -ne "GENERAL") {
-  Write-Host "::error::ACCOUNT PANEL FAILED. Clicking General left the app on tab '$($debugState.tab)', not GENERAL. See uitest-general-tab.png."
+if (-not (Test-Path $debugFile)) {
+  Write-Host "::error::ACCOUNT PANEL FAILED. debug-state.json was never written; PROMPTPETAL_DEBUG did not take."
+  $failures.Add("Account panel: debug-state.json was never written")
+} else {
+  $debugState = Get-Content $debugFile -Raw | ConvertFrom-Json
+  Write-Host "debug-state.json: $(Get-Content $debugFile -Raw)"
+  if ($debugState.tab -ne "GENERAL") {
+    Write-Host "::error::ACCOUNT PANEL FAILED. Clicking General left the app on tab '$($debugState.tab)', not GENERAL. See uitest-general-tab.png."
+    $failures.Add("Account panel: tab is '$($debugState.tab)', not GENERAL")
+  } elseif ($debugState.signInStep -ne "Email") {
+    Write-Host "::error::ACCOUNT PANEL FAILED. Its own state is '$($debugState.signInStep)', not the signed-out Email step this run started on. Something signed in over the network."
+    $failures.Add("Account panel: signInStep is '$($debugState.signInStep)', not Email")
+  } else {
+    Write-Host "Account panel ok: General shows it, still on the emailed-code step, no sign-in attempted."
+  }
+}
+
+if ($failures.Count -gt 0) {
+  Write-Host "::error::$($failures.Count) of 3 checks failed:"
+  $failures | ForEach-Object { Write-Host "  - $_" }
   exit 1
 }
-if ($debugState.signInStep -ne "Email") {
-  Write-Host "::error::ACCOUNT PANEL FAILED. Its own state is '$($debugState.signInStep)', not the signed-out Email step this run started on. Something signed in over the network."
-  exit 1
-}
-Write-Host "Account panel ok: General shows it, still on the emailed-code step, no sign-in attempted."
+Write-Host "All three checks passed: Ask AI, Packs Add, and the account panel."
