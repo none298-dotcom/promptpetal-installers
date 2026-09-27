@@ -227,12 +227,24 @@ while (-not $ring -and (Get-Date) -lt $deadline) {
   $ring = $after.GetEnumerator() | Where-Object { -not $windows.ContainsKey($_.Key) } | Select-Object -First 1
 }
 if (-not $ring) { Save-Screen "uitest-no-ring.png" | Out-Null; throw "Clicking Open Petals did not open a ring" }
-$ringRect = $ring.Value
+$ringHandle = $ring.Key
+Start-Sleep -Milliseconds 1200
+# Re-read the rect after the wait rather than trusting the one caught at creation:
+# RingArrangement's own window size depends on how wide every label is (`half` grows to
+# fit the longest name), and this ring's names ("Ask AI Test", "Dummy One"...) are not the
+# five short defaults every other script on this window ever shows, so the window this
+# ring settles into is not necessarily the size it was first created at.
+$ringRect = New-Object UiTest+Rect
+[void][UiTest]::GetWindowRect($ringHandle, [ref]$ringRect)
 $centerX = [int](($ringRect.Left + $ringRect.Right) / 2)
 $centerY = [int](($ringRect.Top + $ringRect.Bottom) / 2)
-Start-Sleep -Milliseconds 1200
-Write-Host "clicking the Ask AI petal at $centerX, $($centerY - 90)"
-[UiTest]::ClickAt($centerX, $centerY - 90)
+# A fraction of this ring's own half height, not a fixed pixel count: outside the hub's
+# dead zone and inside slot 0's wedge whatever this ring's actual radius turns out to be,
+# since the wedge test is angle only (RadialGeometry.slot), never distance.
+$half = ($ringRect.Bottom - $ringRect.Top) / 2
+$petalOffset = [int]($half * 0.5)
+Write-Host "ring window: $($ringRect.Left),$($ringRect.Top) - $($ringRect.Right),$($ringRect.Bottom), clicking the Ask AI petal at $centerX, $($centerY - $petalOffset)"
+[UiTest]::ClickAt($centerX, $centerY - $petalOffset)
 Start-Sleep -Milliseconds 2500
 Save-Screen "uitest-ask-ai-after.png" | Out-Null
 
