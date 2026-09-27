@@ -237,10 +237,15 @@ $ring = $null
 while (-not $ring -and (Get-Date) -lt $deadline) {
   Start-Sleep -Milliseconds 300
   $after = [UiTest]::WindowsOf($testPids)
-  $ring = $after.GetEnumerator() | Where-Object { -not $windows.ContainsKey($_.Key) } | Select-Object -First 1
+  $newOnes = $after.GetEnumerator() | Where-Object { -not $windows.ContainsKey($_.Key) }
+  $ring = $newOnes | Select-Object -First 1
 }
 if (-not $ring) { Save-Screen "uitest-no-ring.png" | Out-Null; throw "Clicking Open Petals did not open a ring" }
+foreach ($w in $newOnes) {
+  Write-Host "new window: hwnd=$($w.Key) title='$([UiTest]::TitleOf($w.Key))' rect=$($w.Value.Left),$($w.Value.Top)-$($w.Value.Right),$($w.Value.Bottom)"
+}
 $ringHandle = $ring.Key
+Save-Screen "uitest-ring-open.png" | Out-Null
 Start-Sleep -Milliseconds 1200
 # Re-read the rect after the wait rather than trusting the one caught at creation:
 # RingArrangement's own window size depends on how wide every label is (`half` grows to
