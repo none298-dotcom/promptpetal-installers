@@ -529,6 +529,22 @@ jobs:
       - name: Ask AI, clicked by hand
         shell: pwsh
         run: |
+          # The stand-in is started again here if the step that started it took it down on
+          # the way out, so the app's request has something to reach (2026-09-28: the app
+          # said "Could not reach Claude" and the stand-in never logged its request).
+          $log = "${{ steps.aistub.outputs.log }}"
+          function Probe { try { (Invoke-WebRequest "http://127.0.0.1:8791/" -Method Post -Body "{}" -ContentType "application/json" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $false } }
+          $alive = Probe
+          Write-Host "stand-in still answering at the start of this step: $alive"
+          if (-not $alive) {
+            $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"ci\scripts\ai-stub-server.ps1`" -Port 8791 -AnswerText `"${{ steps.aistub.outputs.answer }}`" -LogPath `"$log`" -StopFile `"$env:RUNNER_TEMP\ai-stub-stop-2`""
+            Start-Process powershell -ArgumentList $argLine -WindowStyle Hidden | Out-Null
+            $deadline = (Get-Date).AddSeconds(15)
+            while (-not $alive -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500; $alive = Probe }
+            Write-Host "stand-in restarted in this step: $alive"
+            if (-not $alive) { throw "The stand-in AI server could not be started in this step." }
+          }
+          Remove-Item $log -ErrorAction SilentlyContinue
           ./ci/scripts/verify-ask-ai.ps1 `
             -ExePath "${{ steps.launch.outputs.exe }}" `
             -HomeDir "${{ steps.seedai.outputs.home }}" `
