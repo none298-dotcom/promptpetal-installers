@@ -168,7 +168,7 @@ Start-Sleep -Seconds 1
 # Ours is whatever NEW pid appears after Start-Process: the launcher exe, and a
 # child JVM process if jpackage spawns one, since that is sometimes the one that ends up
 # owning the window rather than the launcher.
-$pidsBefore = [System.Collections.Generic.HashSet[uint32]]::new([uint32[]](Folder-Pids))
+$pidsBefore = [System.Collections.Generic.HashSet[uint32]]::new([uint32[]]@(Folder-Pids))
 $app = Start-Process -FilePath $ExePath -PassThru
 $deadline = (Get-Date).AddSeconds(30)
 $testPids = [System.Collections.Generic.HashSet[uint32]]::new()
