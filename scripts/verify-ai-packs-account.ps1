@@ -137,18 +137,31 @@ while ($app.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep 
 if ($app.HasExited) { throw "The Ask AI / Packs / account test instance exited with $($app.ExitCode) before it showed a window" }
 
 # ── Notepad, with real typing, the way the certifier's own script gets a target to paste into ──
+#
+# A Notepad from an earlier step in this same job may still be open. Closed rather than
+# reused: a second Notepad launched on top of it is how a click meant for the new window
+# lands on the old one instead, and the words go somewhere this script never reads back.
+Get-Process notepad -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
 $notepad = Start-Process notepad.exe -PassThru
 $deadline = (Get-Date).AddSeconds(15)
 while ($notepad.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300; $notepad.Refresh() }
 if ($notepad.MainWindowHandle -eq 0) { throw "Notepad never showed a window" }
 $npRect = New-Object UiTest+Rect
 [void][UiTest]::GetWindowRect($notepad.MainWindowHandle, [ref]$npRect)
+# The title bar first, the same reason verify-open-petals-from-window.ps1 clicks Prompt
+# Petal's own title bar before anything else: a click alone does not always move the
+# foreground away from whatever already owned it.
+[UiTest]::SetForegroundWindow($notepad.MainWindowHandle) | Out-Null
+[UiTest]::ClickAt([int](($npRect.Left + $npRect.Right) / 2), $npRect.Top + 15)
+Start-Sleep -Milliseconds 400
 [UiTest]::ClickAt([int](($npRect.Left + $npRect.Right) / 2), [int](($npRect.Top + $npRect.Bottom) / 2))
 Start-Sleep -Milliseconds 500
 [System.Windows.Forms.SendKeys]::SendWait("Before Ask AI.`r`n")
 Start-Sleep -Milliseconds 500
 if ([UiTest]::NotepadText($notepad.MainWindowHandle) -notlike "*Before Ask AI*") {
-  throw "Test setup failed: typing never reached Notepad"
+  Save-Screen "uitest-notepad-setup-failed.png" | Out-Null
+  throw "Test setup failed: typing never reached Notepad. See uitest-notepad-setup-failed.png."
 }
 
 # ── Find our own instance's window (never the other Prompt Petal already running) ──
