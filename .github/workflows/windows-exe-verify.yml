@@ -526,6 +526,8 @@ jobs:
           Set-Content "$testHome\secret-aianthropic.dpapi" $sealed -Encoding utf8
           "home=$testHome" >> $env:GITHUB_OUTPUT
 
+      # ExpectedAnswer is fixed, never the stand-in's own output: taken from the stand-in, the
+      # wrong_ai_answer fault run passed (36339459286), since it expected the wrong answer too.
       - name: Ask AI, clicked by hand
         shell: pwsh
         run: |
@@ -550,7 +552,7 @@ jobs:
             -HomeDir "${{ steps.seedai.outputs.home }}" `
             -AiBase "http://127.0.0.1:8791" `
             -AiStubLogPath "${{ steps.aistub.outputs.log }}" `
-            -ExpectedAnswer "${{ steps.aistub.outputs.answer }}" `
+            -ExpectedAnswer "PROMPTPETAL_STUB_ANSWER 19a7e6" `
             -BreakMode "${{ inputs.break_mode }}" `
             -OutDir artifacts
 
