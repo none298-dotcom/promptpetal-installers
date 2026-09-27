@@ -52,6 +52,7 @@ public class UiTest {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string windowTitle);
   [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int SendMessage(IntPtr hwnd, int msg, int wParam, StringBuilder lParam);
   [DllImport("user32.dll")] public static extern void SetCursorPos(int x, int y);
@@ -84,6 +85,19 @@ public class UiTest {
     SetCursorPos(x, y);
     mouse_event(LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
     mouse_event(LEFTUP, 0, 0, 0, UIntPtr.Zero);
+  }
+
+  // A tap and release of Alt first: Windows refuses a bare SetForegroundWindow from a
+  // process that did not generate the most recent input, and an Alt key is the standard,
+  // harmless way to reset that lock (it never reaches whatever window ends up frontmost,
+  // since nothing here is a menu). Needed here and nowhere else in this workflow because
+  // this is the only script asking two windows apart that sit in the exact same rectangle.
+  public static void ForceForeground(IntPtr hwnd) {
+    const byte VK_MENU = 0x12;
+    const uint KEYUP = 0x0002;
+    keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_MENU, 0, KEYUP, UIntPtr.Zero);
+    SetForegroundWindow(hwnd);
   }
 
   public static string NotepadText(IntPtr notepadWindow) {
@@ -169,7 +183,7 @@ $npRect = New-Object UiTest+Rect
 # The title bar first, the same reason verify-open-petals-from-window.ps1 clicks Prompt
 # Petal's own title bar before anything else: a click alone does not always move the
 # foreground away from whatever already owned it.
-[UiTest]::SetForegroundWindow($notepad.MainWindowHandle) | Out-Null
+[UiTest]::ForceForeground($notepad.MainWindowHandle)
 [UiTest]::ClickAt([int](($npRect.Left + $npRect.Right) / 2), $npRect.Top + 15)
 Start-Sleep -Milliseconds 400
 [UiTest]::ClickAt([int](($npRect.Left + $npRect.Right) / 2), [int](($npRect.Top + $npRect.Bottom) / 2))
@@ -187,9 +201,17 @@ $main = $windows.GetEnumerator() | Where-Object { [UiTest]::TitleOf($_.Key) -lik
 if (-not $main) { throw "No window belonging to test pids $($testPids -join ', ') is titled '$env:APP_NAME'" }
 $rect = $main.Value
 Write-Host "test instance window: $($rect.Left),$($rect.Top) - $($rect.Right),$($rect.Bottom)"
-Save-Screen "uitest-petals-tab.png" | Out-Null
 
 # ── 1. Ask AI: Open Petals, click the one petal on this ring, read what landed ──
+#
+# This window and the certification instance's window both start at the same, unmoved
+# default position, so they occupy the same screen rectangle. SetForegroundWindow first,
+# not just a click on the title bar: whichever window is already on top there receives an
+# ordinary click regardless of which hwnd this script means, the exact reason a leftover
+# Notepad had to be closed above rather than clicked past.
+[UiTest]::ForceForeground($main.Key)
+Start-Sleep -Milliseconds 400
+Save-Screen "uitest-petals-tab.png" | Out-Null
 [UiTest]::ClickAt($rect.Left + 200, $rect.Top + 15)
 Start-Sleep -Milliseconds 500
 $openPetalsX = $rect.Right - 92
@@ -234,7 +256,7 @@ if (-not (Select-String -Path $AiStubLogPath -Pattern "x-api-key=\S")) {
 }
 
 # ── 2. Packs: click the Packs tab, find Add by its own colour, click it ──
-[UiTest]::SetForegroundWindow($main.Key) | Out-Null
+[UiTest]::ForceForeground($main.Key)
 Start-Sleep -Milliseconds 400
 $packsTabX = $rect.Left + 262
 $packsTabY = $rect.Top + 163
@@ -270,6 +292,8 @@ if ($after -le $before) {
 Write-Host "Packs ok: Add put $($after - $before) more petals on disk."
 
 # ── 3. The account panel: click General, read it back from the debug dump ──
+[UiTest]::ForceForeground($main.Key)
+Start-Sleep -Milliseconds 400
 $generalTabX = $rect.Left + 516
 $generalTabY = $rect.Top + 163
 if ($BreakMode -ne "skip_account_click") {
