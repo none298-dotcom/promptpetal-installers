@@ -215,8 +215,16 @@ Write-Host "clicking the Packs tab at $packsTabX, $packsTabY"
 Start-Sleep -Seconds 8
 $bmp = Save-Screen "uitest-packs-tab.png"
 
+# No petals.json is seeded, so PetalStore.load() falls back to the five defaults in
+# memory (isFirstRun is already false, from the settings file, so no What's New pop up),
+# and the file itself does not exist on disk until something actually saves. Zero, not an
+# error, is what "nothing has ever been added to this fresh profile" looks like.
 $petalsFile = Join-Path $HomeDir "petals.json"
-$before = (Get-Content $petalsFile -Raw | ConvertFrom-Json).Count
+function Petal-Count {
+  if (-not (Test-Path $petalsFile)) { return 0 }
+  return @(Get-Content $petalsFile -Raw | ConvertFrom-Json).Count
+}
+$before = Petal-Count
 Write-Host "petals on disk before Add: $before"
 
 # Not +220: "Check for updates" sits right under the tab row as an OutlinedButton whose
@@ -240,7 +248,7 @@ if (-not $button) {
   Start-Sleep -Seconds 6
   Save-Screen "uitest-packs-after.png" | Out-Null
 
-  $after = (Get-Content $petalsFile -Raw | ConvertFrom-Json).Count
+  $after = Petal-Count
   Write-Host "petals on disk after Add: $after"
   if ($after -le $before) {
     Write-Host "::error::PACKS FAILED. Clicking Add did not add anything to $petalsFile ($before petals before, $after after). See uitest-packs-after.png."
