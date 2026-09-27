@@ -151,8 +151,21 @@ function Folder-Pids {
   [uint32[]](Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase) } |
     ForEach-Object { $_.Id })
 }
-# The certification instance launched earlier in this job is still running from this same
-# folder. Ours is whatever NEW pid appears after Start-Process: the launcher exe, and a
+
+# The certification instance launched earlier in this job is still running, at this same
+# window position (both start unmoved at the same default), and nothing after this point in
+# the workflow needs it any more. Closed rather than juggled: ForegroundApp.kt's own
+# foreground poller runs per PROCESS ("if (pid.value.toLong() != me)"), so it has no idea a
+# second Prompt Petal even exists, and if that instance's window is ever the one Windows
+# reports as foreground for even one 400ms tick, this instance quietly records IT as "the
+# last window that was not Prompt Petal" and later pastes Ask AI's answer into it instead
+# of Notepad, with nothing on screen to say so. One Prompt Petal process removes the
+# question entirely.
+Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($folder, [StringComparison]::OrdinalIgnoreCase) } |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+# Ours is whatever NEW pid appears after Start-Process: the launcher exe, and a
 # child JVM process if jpackage spawns one, since that is sometimes the one that ends up
 # owning the window rather than the launcher.
 $pidsBefore = [System.Collections.Generic.HashSet[uint32]]::new([uint32[]](Folder-Pids))
