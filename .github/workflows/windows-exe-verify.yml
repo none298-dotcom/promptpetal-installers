@@ -39,6 +39,7 @@ on:
           - remove_arp_entry   # delete the uninstall key after install, must fail 10.2.7
           - wrong_vendor       # name a company the certificate does not, must fail 10.3.4
           - skip_packs_and_account # never click Add or General, both checks must fail
+          - wrong_ai_answer    # the AI stand-in returns a different answer, Ask AI must fail
       wait_seconds:
         description: "How long to let the installed app run before judging it"
         default: "40"
@@ -441,6 +442,99 @@ jobs:
           ./ci/scripts/verify-packs-and-account.ps1 `
             -ExePath "${{ steps.launch.outputs.exe }}" `
             -HomeDir "${{ steps.seed.outputs.home }}" `
+            -BreakMode "${{ inputs.break_mode }}" `
+            -OutDir artifacts
+
+      - name: Start a stand-in AI server
+        id: aistub
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\ai-stub-requests.log"
+          $stop = "$env:RUNNER_TEMP\ai-stub-stop"
+          # wrong_ai_answer proves the Ask AI check actually reads the answer, rather than
+          # only checking that Notepad's text changed: the stand-in answers with something
+          # else, and the same assertion, unchanged, must now fail.
+          $answer = if ("${{ inputs.break_mode }}" -eq "wrong_ai_answer") { "WRONG STAND-IN ANSWER, this must fail Ask AI" } else { "PROMPTPETAL_STUB_ANSWER 19a7e6" }
+          # One string, not an array: Start-Process's own quoting of an array is not to be
+          # trusted with values that have spaces in them, and $answer does.
+          $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"ci\scripts\ai-stub-server.ps1`" -Port 8791 -AnswerText `"$answer`" -LogPath `"$log`" -StopFile `"$stop`""
+          # Its own stdout/stderr redirected to files: Start-Process -WindowStyle Hidden
+          # gives this step nothing of the child's console either way, so without this a
+          # stub that failed to bind, or threw before its first Write-Host, fails silent.
+          $stubOut = "$env:RUNNER_TEMP\ai-stub-stdout.txt"
+          $stubErr = "$env:RUNNER_TEMP\ai-stub-stderr.txt"
+          $proc = Start-Process powershell -ArgumentList $argLine -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $stubOut -RedirectStandardError $stubErr
+
+          # Proven to actually answer before anything else in this job depends on it.
+          $ready = $false
+          $deadline = (Get-Date).AddSeconds(15)
+          while (-not $ready -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            try {
+              $probe = Invoke-WebRequest -Uri "http://127.0.0.1:8791/" -Method Post -Body "{}" -ContentType "application/json" -UseBasicParsing -TimeoutSec 2
+              if ($probe.StatusCode -eq 200) { $ready = $true }
+            } catch { }
+          }
+          Write-Host "--- stub stdout ---"; Get-Content $stubOut -ErrorAction SilentlyContinue | Write-Host
+          Write-Host "--- stub stderr ---"; Get-Content $stubErr -ErrorAction SilentlyContinue | Write-Host
+          if (-not $ready) { throw "The stand-in AI server on 8791 never answered a probe request; see stdout/stderr above." }
+          Write-Host "stand-in AI server is answering on 8791"
+          # The probe above is itself a request the stub logs; clear it so the real check
+          # later counts only what the app itself sent.
+          Remove-Item $log -ErrorAction SilentlyContinue
+
+          "answer=$answer" >> $env:GITHUB_OUTPUT
+          "log=$log" >> $env:GITHUB_OUTPUT
+          "stop=$stop" >> $env:GITHUB_OUTPUT
+          "pid=$($proc.Id)" >> $env:GITHUB_OUTPUT
+
+      - name: Seed a Pro test profile with an Ask AI petal and a saved dummy key
+        id: seedai
+        shell: pwsh
+        run: |
+          $testHome = "$env:RUNNER_TEMP\promptpetal-uitest-ai"
+          New-Item -ItemType Directory -Force $testHome | Out-Null
+          '{"source":"lifetime","updatedAt":"2026-09-27T00:00:00Z"}' |
+            Set-Content "$testHome\entitlement.json" -Encoding utf8
+          # whatsNewDontShow, so a fresh profile does not open on the "What's New" pop up
+          # instead of the window this script means to click: seeding petals.json and
+          # settings.json already makes AppState.isFirstRun false, so without this the pop
+          # up for the current version shows on top of everything below.
+          '{"aiProvider":"anthropic","aiModel":"claude-sonnet-5","whatsNewDontShow":true}' |
+            Set-Content "$testHome\settings.json" -Encoding utf8
+
+          # One petal, nothing else: Petal.isWorkflow is true for "ai_transform" (it is not
+          # in PROMPT_ACTIONS), so an Ask AI petal sits with the workflows rather than the
+          # plain prompts, and a mix of the two reorders the ring so prompts come first,
+          # which is why an earlier run's click on slot 0's own angle landed on a plain
+          # petal instead. One petal removes the reordering question entirely: whatever
+          # this ring's own angle for a single petal is, it is the only wedge there is.
+          $board = "2FA37340-4F2C-4F2C-B9CE-0F97732589DE"
+          $petals = @(
+            @{ id = "AAAA0001-0000-0000-0000-000000000001"; boardID = $board; name = "Ask AI Test"
+               template = "Say hello in exactly five words."; isEnabled = $true; slot = 0
+               actionType = "ai_transform"; iconSystemName = "sparkles" }
+          )
+          $petals | ConvertTo-Json -Depth 5 -AsArray | Set-Content "$testHome\petals.json" -Encoding utf8
+
+          # Sealed exactly the way WindowsKeyStore seals a real key (DPAPI, CurrentUser), so
+          # the app finds it where it looks rather than through a shortcut this test invented.
+          $env:PP_VALUE = "sk-ant-test-dummy-key-not-real"
+          $sealed = powershell -NoProfile -NonInteractive -Command "Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes(`$env:PP_VALUE), `$null, 'CurrentUser'))"
+          if (-not $sealed) { throw "Could not seal the test AI key with DPAPI" }
+          Set-Content "$testHome\secret-aianthropic.dpapi" $sealed -Encoding utf8
+          "home=$testHome" >> $env:GITHUB_OUTPUT
+
+      - name: Ask AI, clicked by hand
+        shell: pwsh
+        run: |
+          ./ci/scripts/verify-ask-ai.ps1 `
+            -ExePath "${{ steps.launch.outputs.exe }}" `
+            -HomeDir "${{ steps.seedai.outputs.home }}" `
+            -AiBase "http://127.0.0.1:8791" `
+            -AiStubLogPath "${{ steps.aistub.outputs.log }}" `
+            -ExpectedAnswer "${{ steps.aistub.outputs.answer }}" `
             -BreakMode "${{ inputs.break_mode }}" `
             -OutDir artifacts
 
