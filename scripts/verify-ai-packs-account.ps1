@@ -319,10 +319,10 @@ foreach ($c in $candidates) {
 # askAI() runs the request on a background thread and pastes only once it comes back, so
 # this polls rather than trusting one fixed pause: a screenshot from a run that used a flat
 # 2.5s wait caught the app still mid-request, a small loading flower still on the tab bar.
-# AIClient.kt's own HttpRequest carries a 90 second timeout, so this waits long enough to
-# find out whether the request is genuinely stuck rather than merely slow.
+# A 100s wait once ruled out AIClient.kt's own 90s HttpRequest timeout actually firing: a
+# request that never arrives at all does not need that long to prove it never will.
 $notepadText = $null
-$deadline = (Get-Date).AddSeconds(100)
+$deadline = (Get-Date).AddSeconds(20)
 while ((Get-Date) -lt $deadline) {
   Start-Sleep -Milliseconds 500
   $notepadText = [UiTest]::NotepadText($notepad.MainWindowHandle)
