@@ -1,0 +1,104 @@
+name: Build and verify Linux
+
+# Builds Prompt Petal's .deb on a real Ubuntu runner, installs it, and proves a petal lands
+# in a real text editor on an X11 desktop: the Linux twin of windows-exe-verify.yml.
+# The source comes from the private repo with the same read-only deploy key and never
+# lands here; only screenshots and the package are kept.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or sha of the private source to build"
+        default: main
+      break_mode:
+        description: "Inject a known defect, to prove the insertion check goes red. Always 'none' for a real build."
+        type: choice
+        default: none
+        options:
+          - none
+          - no_pick   # the app never picks a petal, so the editor stays empty and the check must fail
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the private source
+        uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install a desktop to test on
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 libsecret-tools fakeroot
+
+      - name: Build the .deb
+        working-directory: desktop
+        run: ./gradlew packageDeb --no-daemon "-Pchannel=linux"
+
+      - name: Install the .deb
+        run: |
+          deb=$(ls desktop/build/compose/binaries/main/deb/*.deb | head -1)
+          echo "package: $deb"
+          sudo apt-get install -y -q "./$deb"
+          ls /opt/prompt-petal/bin
+          mkdir -p artifacts && cp "$deb" artifacts/
+
+      - name: Run it and insert a petal into a real editor
+        env:
+          DISPLAY: ":99"
+        run: |
+          set -x
+          Xvfb :99 -screen 0 1600x1000x24 &
+          sleep 2
+          openbox &
+          sleep 2
+          export PROMPTPETAL_HOME="$(mktemp -d)"
+          echo "" > /tmp/note.txt
+          mousepad /tmp/note.txt &
+          sleep 4
+          import -window root artifacts/1-editor.png
+          if [ "${{ inputs.break_mode }}" = "no_pick" ]; then PICK=""; else PICK=0; fi
+          PROMPTPETAL_AUTOPICK=$PICK /opt/prompt-petal/bin/prompt-petal > artifacts/app.log 2>&1 &
+          sleep 20
+          import -window root artifacts/2-app-running.png
+          # Back to the editor, then summon the flower the way a system shortcut would.
+          xdotool search --name "note.txt" windowactivate --sync || true
+          sleep 1
+          /opt/prompt-petal/bin/prompt-petal --open &
+          sleep 1
+          import -window root artifacts/3-flower-open.png
+          sleep 5
+          import -window root artifacts/4-after-insert.png
+          xdotool search --name "note.txt" windowactivate --sync key ctrl+s || true
+          sleep 2
+          cp /tmp/note.txt artifacts/note.txt
+          echo "---- note.txt ----"; cat /tmp/note.txt
+
+      - name: The petal's words landed in the editor
+        run: |
+          if grep -q "Research the following" /tmp/note.txt; then
+            echo "PASS: the Research petal was inserted into mousepad"
+          else
+            echo "::error::The editor does not hold the petal's words"
+            exit 1
+          fi
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-verify
+          path: artifacts/
