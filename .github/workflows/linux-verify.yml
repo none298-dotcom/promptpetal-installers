@@ -87,8 +87,12 @@ jobs:
           import -window root artifacts/3-flower-open.png
           sleep 5
           import -window root artifacts/4-after-insert.png
-          xdotool search --name "note.txt" windowactivate --sync key ctrl+s || true
+          # Save from the editor's own window: wmctrl raises it, then Ctrl+S goes to it.
+          wmctrl -a "note.txt" || true
+          sleep 1
+          xdotool key --clearmodifiers ctrl+s
           sleep 2
+          import -window root artifacts/5-saved.png
           cp /tmp/note.txt artifacts/note.txt
           echo "---- note.txt ----"; cat /tmp/note.txt
 
