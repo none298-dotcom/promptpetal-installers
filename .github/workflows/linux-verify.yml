@@ -43,6 +43,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 libsecret-tools fakeroot xdg-utils desktop-file-utils
+          # A desktop has these; a bare runner does not, and the package's menu entry needs them.
+          sudo mkdir -p /usr/share/applications /usr/share/desktop-directories /usr/share/icons/hicolor
 
       - name: Build the .deb
         working-directory: desktop
@@ -50,6 +52,7 @@ jobs:
 
       - name: Install the .deb
         run: |
+          mkdir -p artifacts
           deb=$(ls desktop/build/compose/binaries/main/deb/*.deb | head -1)
           echo "package: $deb"
           sudo apt-get install -y -q "./$deb"
