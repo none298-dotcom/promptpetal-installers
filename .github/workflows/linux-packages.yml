@@ -63,6 +63,7 @@ jobs:
 
   snap:
     needs: app-image
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +101,7 @@ jobs:
 
   flatpak:
     needs: app-image
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
@@ -130,6 +132,7 @@ jobs:
 
   flatpak-run:
     needs: flatpak
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +160,7 @@ jobs:
   fedora:
     # Fedora gets the same AppImage the website offers, run on Fedora's own libraries.
     needs: app-image
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     container:
       image: fedora:41
