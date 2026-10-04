@@ -11,6 +11,9 @@ on:
       source_ref:
         description: "Branch, tag or sha of the private source to build"
         default: main
+      app_build:
+        description: "Build number the AppImage compares with the feed"
+        default: "44"
       break_mode:
         description: "Inject a known defect, to prove the insertion checks go red. Always 'none' for a real build."
         type: choice
@@ -37,12 +40,17 @@ jobs:
           java-version: "17"
       - name: Build the app image folder
         working-directory: desktop
-        run: ./gradlew createDistributable --no-daemon "-Pchannel=linux"
+        run: ./gradlew createDistributable --no-daemon "-Pchannel=linux" "-PappBuild=${{ inputs.app_build }}"
       - name: Upload the app image folder for the Snap and the Flatpak
         uses: actions/upload-artifact@v4
         with:
           name: app-folder
           path: desktop/build/compose/binaries/main/app/
+      - name: Build the AppImage's own copy, which updates itself from the feed
+        working-directory: desktop
+        run: |
+          rm -rf build/compose/binaries/main/app
+          ./gradlew createDistributable --no-daemon "-Pchannel=appimage" "-PappBuild=${{ inputs.app_build }}"
       - name: Build the AppImage
         run: |
           sudo apt-get update -q
