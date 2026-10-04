@@ -1,0 +1,158 @@
+name: Build and verify Linux packages
+
+# The AppImage (the website download), the Snap, the Flatpak, and the AppImage on Fedora.
+# Each one is built from the private source and, where the runner can run it, put through
+# the same real-editor check as the .deb (packaging/linux/ci/insert-check.sh): a petal
+# picked from the flower has to land in Mousepad.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or sha of the private source to build"
+        default: main
+      break_mode:
+        description: "Inject a known defect, to prove the insertion checks go red. Always 'none' for a real build."
+        type: choice
+        default: none
+        options:
+          - none
+          - no_pick
+
+permissions:
+  contents: read
+
+jobs:
+  app-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build the app image folder
+        working-directory: desktop
+        run: ./gradlew createDistributable --no-daemon "-Pchannel=linux"
+      - name: Upload the app image folder for the Snap and the Flatpak
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-folder
+          path: desktop/build/compose/binaries/main/app/
+      - name: Build the AppImage
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 x11-utils wmctrl libfuse2t64 file
+          packaging/linux/appimage/build-appimage.sh "desktop/build/compose/binaries/main/app/Prompt Petal" out
+          ls -la out
+      - name: The AppImage puts a petal into a real editor
+        run: |
+          chmod +x out/Prompt_Petal-x86_64.AppImage
+          packaging/linux/ci/insert-check.sh "$PWD/out/Prompt_Petal-x86_64.AppImage" artifacts ${{ inputs.break_mode }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appimage
+          path: |
+            out/Prompt_Petal-x86_64.AppImage
+            artifacts/
+
+  snap:
+    needs: app-image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-folder
+          path: appfolder
+      - name: Stage the app folder
+        run: |
+          cp -r "appfolder/Prompt Petal" packaging/linux/app
+          chmod -R a+rX packaging/linux/app
+          chmod +x "packaging/linux/app/bin/Prompt Petal"
+      - uses: snapcore/action-build@v1
+        id: build
+        with:
+          path: packaging/linux
+      - name: Install the snap and run its command
+        run: |
+          sudo snap install --dangerous "${{ steps.build.outputs.snap }}"
+          snap list prompt-petal
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 x11-utils wmctrl
+          packaging/linux/ci/insert-check.sh "prompt-petal" artifacts ${{ inputs.break_mode }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snap
+          path: |
+            ${{ steps.build.outputs.snap }}
+            artifacts/
+
+  flatpak:
+    needs: app-image
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - name: Install git and ssh for the checkout
+        run: dnf install -y git openssh-clients || true
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-folder
+          path: appfolder
+      - name: Stage the app folder
+        run: |
+          cp -r "appfolder/Prompt Petal" packaging/linux/app
+          chmod +x "packaging/linux/app/bin/Prompt Petal"
+      - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: prompt-petal.flatpak
+          manifest-path: packaging/linux/com.promptpetal.PromptPetal.yml
+          cache: false
+
+  fedora:
+    # Fedora gets the same AppImage the website offers, run on Fedora's own libraries.
+    needs: app-image
+    runs-on: ubuntu-24.04
+    container:
+      image: fedora:41
+    steps:
+      - name: Tools for the desktop
+        run: dnf install -y git openssh-clients xorg-x11-server-Xvfb openbox xdotool mousepad ImageMagick dbus-x11 wmctrl which findutils
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+          path: got
+      - name: The AppImage puts a petal into a real editor on Fedora
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          cat /etc/fedora-release
+          chmod +x got/out/Prompt_Petal-x86_64.AppImage
+          packaging/linux/ci/insert-check.sh "$PWD/got/out/Prompt_Petal-x86_64.AppImage" artifacts ${{ inputs.break_mode }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fedora
+          path: artifacts/
