@@ -125,6 +125,17 @@ jobs:
           bundle: prompt-petal.flatpak
           manifest-path: packaging/linux/com.promptpetal.PromptPetal.yml
           cache: false
+      - name: The Flatpak puts a petal into a real editor
+        run: |
+          dnf install -y xorg-x11-server-Xvfb openbox xdotool mousepad ImageMagick dbus-x11 wmctrl which findutils
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install -y --noninteractive --bundle prompt-petal.flatpak
+          packaging/linux/ci/insert-check.sh "flatpak run com.promptpetal.PromptPetal" artifacts ${{ inputs.break_mode }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flatpak-run
+          path: artifacts/
 
   fedora:
     # Fedora gets the same AppImage the website offers, run on Fedora's own libraries.
