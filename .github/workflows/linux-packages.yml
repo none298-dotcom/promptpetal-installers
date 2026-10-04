@@ -105,8 +105,6 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
       options: --privileged
     steps:
-      - name: Install git and ssh for the checkout
-        run: dnf install -y git openssh-clients || true
       - uses: actions/checkout@v4
         with:
           repository: none298-dotcom/promptpetal
@@ -125,10 +123,29 @@ jobs:
           bundle: prompt-petal.flatpak
           manifest-path: packaging/linux/com.promptpetal.PromptPetal.yml
           cache: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: prompt-petal.flatpak
+
+  flatpak-run:
+    needs: flatpak
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
       - name: The Flatpak puts a petal into a real editor
         run: |
-          dnf install -y xorg-x11-server-Xvfb openbox xdotool mousepad ImageMagick dbus-x11 wmctrl which findutils
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak xvfb openbox mousepad imagemagick dbus-x11 wmctrl xdotool
           flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install -y --noninteractive flathub org.freedesktop.Platform//24.08
           flatpak --user install -y --noninteractive --bundle prompt-petal.flatpak
           packaging/linux/ci/insert-check.sh "flatpak run com.promptpetal.PromptPetal" artifacts ${{ inputs.break_mode }}
       - uses: actions/upload-artifact@v4

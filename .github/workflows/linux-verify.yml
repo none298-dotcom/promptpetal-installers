@@ -42,7 +42,7 @@ jobs:
       - name: Install a desktop to test on
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 libsecret-tools fakeroot xdg-utils desktop-file-utils x11-utils wmctrl
+          sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 libsecret-tools fakeroot xdg-utils desktop-file-utils wmctrl
           # No menu folders made here: the package has to install on a system without them.
 
       - name: Build the .deb
