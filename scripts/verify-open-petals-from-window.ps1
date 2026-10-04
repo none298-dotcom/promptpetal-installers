@@ -134,6 +134,12 @@ Start-Sleep -Milliseconds 800
 [OpenPetalsClick]::ClickAt($main.Value.Left + 200, $main.Value.Top + 15)
 Start-Sleep -Milliseconds 500
 
+# ── Step 3a+: a fresh 1.3 install opens on the walkthrough, as a new user's does.
+# Press its Skip (top right, measured on open-petals-before.png: window 48,48 - 668,808,
+# Skip at 559,109), the way a person gets past it, then look at the main window.
+[OpenPetalsClick]::ClickAt($main.Value.Right - 109, $main.Value.Top + 61)
+Start-Sleep -Milliseconds 1200
+
 # ── Step 3b: click "Open Petals" by its position in that window ────────────
 # MainScreen.kt's Header puts it at the right edge of the padded row, level with the title. There
 # is no accessibility tree to ask for it by name: Compose Desktop draws the whole window
