@@ -43,12 +43,13 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 libsecret-tools fakeroot xdg-utils desktop-file-utils x11-utils wmctrl
-          # A desktop has these; a bare runner does not, and the package's menu entry needs them.
-          sudo mkdir -p /usr/share/applications /usr/share/desktop-directories /usr/share/icons/hicolor
+          # No menu folders made here: the package has to install on a system without them.
 
       - name: Build the .deb
         working-directory: desktop
-        run: ./gradlew packageDeb --no-daemon "-Pchannel=linux"
+        run: |
+          ./gradlew packageDeb --no-daemon "-Pchannel=linux"
+          ../packaging/linux/deb/finish-deb.sh build/compose/binaries/main/deb/*.deb
 
       - name: Install the .deb
         run: |
@@ -57,6 +58,7 @@ jobs:
           echo "package: $deb"
           sudo apt-get install -y -q "./$deb"
           ls -la /opt/prompt-petal/bin | tee artifacts/installed-bin.txt
+          command -v prompt-petal | tee -a artifacts/installed-bin.txt
           mkdir -p artifacts && cp "$deb" artifacts/
 
       - name: Run it and insert a petal into a real editor
@@ -69,7 +71,7 @@ jobs:
           openbox &
           sleep 2
           export PROMPTPETAL_HOME="$(mktemp -d)"
-          BIN="/opt/prompt-petal/bin/Prompt Petal"
+          BIN=prompt-petal
           echo "launcher: $BIN"
           echo "" > /tmp/note.txt
           mousepad /tmp/note.txt &
