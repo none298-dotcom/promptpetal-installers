@@ -13,7 +13,11 @@ on:
         default: main
       app_build:
         description: "Build number the AppImage compares with the feed"
-        default: "44"
+        default: "45"
+      publish_snap:
+        description: "Release the snap to the Snap Store's stable channel once its check passes"
+        type: boolean
+        default: false
       break_mode:
         description: "Inject a known defect, to prove the insertion checks go red. Always 'none' for a real build."
         type: choice
@@ -99,6 +103,14 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb openbox xdotool mousepad imagemagick dbus-x11 x11-utils wmctrl
           packaging/linux/ci/insert-check.sh "prompt-petal" artifacts ${{ inputs.break_mode }}
+      - name: Release to the Snap Store
+        if: ${{ inputs.publish_snap && inputs.break_mode == 'none' }}
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: stable
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -112,7 +124,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -156,7 +168,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q flatpak xvfb openbox mousepad imagemagick dbus-x11 wmctrl xdotool
           flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak --user install -y --noninteractive flathub org.freedesktop.Platform//24.08
+          flatpak --user install -y --noninteractive flathub org.gnome.Platform//48
           flatpak --user install -y --noninteractive --bundle prompt-petal.flatpak
           packaging/linux/ci/insert-check.sh "flatpak run com.promptpetal.PromptPetal" artifacts ${{ inputs.break_mode }}
       - uses: actions/upload-artifact@v4
