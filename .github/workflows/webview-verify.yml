@@ -1,0 +1,112 @@
+name: Verify the system web engine (sign in to Claude and ChatGPT)
+
+# Windows and Linux read Claude's and ChatGPT's usage through the system's own web engine
+# (WebView2, WebKitGTK), because claude.ai answers Java's own requests with Cloudflare's
+# challenge page. This builds the Linux engine library against WebKitGTK 4.1, then on both
+# systems: reads each site from a hidden page (must answer, signed out, with no challenge)
+# and opens the Sign in to Claude window and photographs it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or sha of the private source"
+        default: main
+      break_mode:
+        description: "Inject a known defect to prove the check goes red. Always 'none' for a real run."
+        type: choice
+        default: none
+        options: [none, wrong_host]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: Install WebKitGTK 4.1 and a desktop
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev xvfb openbox imagemagick dbus-x11
+      - name: Build libwebview.so against WebKitGTK 4.1
+        run: |
+          git clone -q --depth 1 --branch 0.10.0 https://github.com/webview/webview /tmp/webview
+          mkdir -p artifacts desktop/src/main/resources/webview/linux-x64
+          g++ -std=c++11 -O2 -shared -fPIC -DWEBVIEW_BUILD_SHARED -DWEBVIEW_GTK /tmp/webview/webview.cc \
+            $(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.1) -o artifacts/libwebview.so
+          ldd artifacts/libwebview.so | grep -E "webkit|gtk" | tee artifacts/ldd.txt
+          cp artifacts/libwebview.so desktop/src/main/resources/webview/linux-x64/
+      - name: Plant the fault
+        if: inputs.break_mode == 'wrong_host'
+        run: sed -i "s/endsWith('\$host')/endsWith('example.invalid')/" desktop/src/main/kotlin/com/promptpetal/desktop/WebSession.kt
+      - name: Read each site from a hidden page, then open the sign in window
+        env: { DISPLAY: ":99" }
+        working-directory: desktop
+        run: |
+          Xvfb :99 -screen 0 1400x900x24 & sleep 2; openbox & sleep 2
+          eval $(dbus-launch --sh-syntax)
+          ./gradlew -q --no-daemon classes
+          for s in claude chatgpt; do
+            ./gradlew -q --no-daemon runWebProbe --args="read $s" 2>&1 | tee -a ../artifacts/probe.txt
+          done
+          (./gradlew -q --no-daemon runWebProbe --args="signin claude" > ../artifacts/signin.txt 2>&1 &)
+          sleep 40; import -window root ../artifacts/linux-sign-in-claude.png
+          (./gradlew -q --no-daemon runWebProbe --args="signin chatgpt" > ../artifacts/signin2.txt 2>&1 &)
+          sleep 40; import -window root ../artifacts/linux-sign-in-chatgpt.png
+      - name: Judge
+        run: |
+          cat artifacts/probe.txt
+          test "$(grep -c 'RESULT claude: signedIn=false' artifacts/probe.txt)" = 1
+          test "$(grep -c 'RESULT chatgpt: signedIn=false' artifacts/probe.txt)" = 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: linux-webview, path: artifacts }
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: Plant the fault
+        if: inputs.break_mode == 'wrong_host'
+        shell: bash
+        run: sed -i "s/endsWith('\$host')/endsWith('example.invalid')/" desktop/src/main/kotlin/com/promptpetal/desktop/WebSession.kt
+      - name: Read each site from a hidden page, then open the sign in window
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ../artifacts | Out-Null
+          ./gradlew.bat -q --no-daemon classes
+          foreach ($s in "claude","chatgpt") { ./gradlew.bat -q --no-daemon runWebProbe --args="read $s" 2>&1 | Tee-Object -Append ../artifacts/probe.txt }
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          foreach ($s in "claude","chatgpt") {
+            Start-Process -FilePath ./gradlew.bat -ArgumentList "-q","--no-daemon","runWebProbe","--args=`"signin $s`"" -WindowStyle Hidden
+            Start-Sleep -Seconds 45
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("../artifacts/windows-sign-in-$s.png")
+            Get-Process java -ErrorAction SilentlyContinue | Stop-Process -Force
+          }
+      - name: Judge
+        shell: bash
+        run: |
+          cat artifacts/probe.txt
+          test "$(grep -c 'RESULT claude: signedIn=false' artifacts/probe.txt)" = 1
+          test "$(grep -c 'RESULT chatgpt: signedIn=false' artifacts/probe.txt)" = 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: windows-webview, path: artifacts }
