@@ -115,6 +115,20 @@ jobs:
             $bmp.Save("../artifacts/windows-sign-in-$s.png")
             Get-Process java -ErrorAction SilentlyContinue | Stop-Process -Force
           }
+      - name: Photograph the tray menu on the real taskbar
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $env:PROMPTPETAL_SHOW_TRAY_MENU = "1"
+          $env:PROMPTPETAL_HOME = (New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/pphome").FullName
+          Start-Process -FilePath ./gradlew.bat -ArgumentList "-q","--no-daemon","run" -WindowStyle Hidden
+          Start-Sleep -Seconds 120
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("../artifacts/windows-tray-menu.png")
+          Get-Process java -ErrorAction SilentlyContinue | Stop-Process -Force
       - name: Judge
         shell: bash
         # GitHub's Windows machines sit on cloud addresses, where claude.ai holds every page
