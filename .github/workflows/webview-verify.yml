@@ -57,6 +57,9 @@ jobs:
           for s in claude chatgpt; do
             ./gradlew -q --no-daemon runWebProbe --args="read $s" 2>&1 | tee -a ../artifacts/probe.txt
           done
+          (PROMPTPETAL_WEBDEBUG=1 ./gradlew -q --no-daemon runWebProbe --args="read claude" > ../artifacts/debug-read.txt 2>&1 &)
+          for i in 1 2 3 4; do sleep 10; import -window root ../artifacts/linux-debug-read-$i.png; done
+          pkill -f WebSessionProbe || true
           (./gradlew -q --no-daemon runWebProbe --args="signin claude" > ../artifacts/signin.txt 2>&1 &)
           sleep 40; import -window root ../artifacts/linux-sign-in-claude.png
           (./gradlew -q --no-daemon runWebProbe --args="signin chatgpt" > ../artifacts/signin2.txt 2>&1 &)
@@ -92,6 +95,17 @@ jobs:
           ./gradlew.bat -q --no-daemon classes
           foreach ($s in "claude","chatgpt") { ./gradlew.bat -q --no-daemon runWebProbe --args="read $s" 2>&1 | Tee-Object -Append ../artifacts/probe.txt }
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $env:PROMPTPETAL_WEBDEBUG = "1"
+          Start-Process -FilePath ./gradlew.bat -ArgumentList "-q","--no-daemon","runWebProbe","--args=`"read claude`"" -WindowStyle Hidden
+          foreach ($i in 1..4) {
+            Start-Sleep -Seconds 10
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("../artifacts/windows-debug-read-$i.png")
+          }
+          Get-Process java -ErrorAction SilentlyContinue | Stop-Process -Force
+          $env:PROMPTPETAL_WEBDEBUG = ""
           foreach ($s in "claude","chatgpt") {
             Start-Process -FilePath ./gradlew.bat -ArgumentList "-q","--no-daemon","runWebProbe","--args=`"signin $s`"" -WindowStyle Hidden
             Start-Sleep -Seconds 45
