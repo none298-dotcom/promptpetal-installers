@@ -100,6 +100,28 @@ function App-Pids {
     ForEach-Object { $_.Id })
 }
 
+# ── Step 0: past the walkthrough ───────────────────────────────────────────
+# A fresh install opens on the walkthrough, which has no Skip: its last page is the Pro
+# offer and a person reaches it by Continue. This test is about the main window, the one
+# everybody sees from the second launch on, so it starts from there: the app is stopped,
+# its settings say the walkthrough was seen (AppState.kt WALKTHROUGH_VERSION), and it is
+# started again.
+Get-Process | Where-Object { $_.Path -and $_.Path -like "$folder*" } | Stop-Process -Force
+Start-Sleep -Seconds 2
+$settingsPath = Join-Path $env:APPDATA "PromptPetal\settings.json"
+New-Item -ItemType Directory -Force (Split-Path $settingsPath) | Out-Null
+$settings = @{}
+if (Test-Path $settingsPath) {
+  (Get-Content $settingsPath -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $settings[$_.Name] = $_.Value }
+}
+$settings["walkthroughVersion"] = 99
+$settings["whatsNewDontShow"] = $true
+$settings | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding utf8
+Start-Process -FilePath $ExePath | Out-Null
+$deadline = (Get-Date).AddSeconds(40)
+while (@(App-Pids).Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+Start-Sleep -Seconds 8
+
 # ── Step 1 and 2: open Notepad, type some text ──────────────────────────────
 $notepad = Start-Process notepad.exe -PassThru
 $deadline = (Get-Date).AddSeconds(15)
@@ -133,12 +155,6 @@ if (-not $main) { throw "No visible Prompt Petal window to click Open Petals in"
 Start-Sleep -Milliseconds 800
 [OpenPetalsClick]::ClickAt($main.Value.Left + 200, $main.Value.Top + 15)
 Start-Sleep -Milliseconds 500
-
-# ── Step 3a+: a fresh 1.3 install opens on the walkthrough, as a new user's does.
-# Press its Skip (top right, measured on open-petals-before.png: window 48,48 - 668,808,
-# Skip at 559,109), the way a person gets past it, then look at the main window.
-[OpenPetalsClick]::ClickAt($main.Value.Right - 109, $main.Value.Top + 61)
-Start-Sleep -Milliseconds 1200
 
 # ── Step 3b: click "Open Petals" by its position in that window ────────────
 # MainScreen.kt's Header puts it at the right edge of the padded row, level with the title. There
