@@ -1,8 +1,8 @@
 # A tap on a petal in the Windows 11 widget, exactly as the Widgets board delivers it:
 # the board calls the provider's OnActionInvoked, which runs the same code as
 # `PromptPetal.WidgetProvider.exe --tap <petalId>` (Program.cs shares it), and that hands
-# the petal to the running Prompt Petal app over its named pipe. The app then does what a
-# click on the petal does: its words land where the person was typing.
+# the petal to the running Prompt Petal app over its named pipe. The app copies the prompt,
+# like the Mac widget's Copy prompt: the words are on the clipboard and Notepad is untouched.
 #
 # Setup mirrors verify-open-petals-from-window.ps1: Notepad in front with some text typed
 # by a real click and real keys, so the app has a real "last window that was not Prompt
@@ -94,11 +94,15 @@ Save-Screen "widget-tap-after.png"
 $text = [WidgetTap]::NotepadText($notepad.MainWindowHandle)
 Write-Host "Notepad now reads:"
 Write-Host $text
-if ($text -like "*Research the following thoroughly*") {
-  Write-Host "The tapped petal's words landed in Notepad, where the person was typing."
-  exit 0
-}
 $clip = Get-Clipboard -Raw -EA SilentlyContinue
 Write-Host "clipboard: $clip"
-Write-Host "::error::The tap reached the app but the petal's words did not land in Notepad. See widget-tap-before.png and widget-tap-after.png."
+if ($text -like "*Research the following thoroughly*") {
+  Write-Host "::error::The tap typed the words into Notepad. A widget tap copies and inserts nothing."
+  exit 1
+}
+if ($clip -like "*Research the following thoroughly*") {
+  Write-Host "The tapped petal's words are on the clipboard, and Notepad is as it was."
+  exit 0
+}
+Write-Host "::error::The tap reached the app but the petal's words are not on the clipboard. See widget-tap-before.png and widget-tap-after.png."
 exit 1

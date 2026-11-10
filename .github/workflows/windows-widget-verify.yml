@@ -20,7 +20,7 @@ on:
     inputs:
       source_ref:
         description: "Branch, tag or sha of the private source to build"
-        default: windows-widget
+        default: widget-copy-verify
       break_mode:
         description: "Inject a known defect, to prove an assertion goes red. Always 'none' for a real build."
         type: choice
@@ -267,7 +267,7 @@ jobs:
           Write-Host "the installed app carries the widget package: $(if ($bundled) { $bundled.FullName } else { $jar.FullName })"
           "exe=$($app.FullName)" >> $env:GITHUB_OUTPUT
 
-      - name: A tap on a petal lands its words in Notepad
+      - name: A tap on a petal copies its words
         shell: pwsh
         run: ./ci/scripts/verify-widget-tap.ps1 -AppExe "${{ steps.app.outputs.exe }}" -ProviderExe (Resolve-Path widget-out/PromptPetal.WidgetProvider.exe).Path -PetalId $env:RESEARCH_ID -OutDir artifacts
 
