@@ -139,6 +139,94 @@ jobs:
             }
           }
 
+      # The widget: the Windows 11 Widgets board tile, packed and signed here so the EXE
+      # this job builds carries it (`desktop/build.gradle.kts` bundles
+      # desktop/widget/out/PromptPetalWidget.msix when it exists, and the app registers it
+      # at launch on Windows 11). windows-widget-verify.yml proves the package installs and
+      # a tap copies; this job makes sure every shipped EXE has it, Store copy included.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Azure login (federated, OIDC)
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build the widget provider
+        shell: pwsh
+        run: |
+          dotnet publish desktop/widget/PetalWidgetProvider.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o widget-out
+          if (-not (Test-Path widget-out/PromptPetal.WidgetProvider.exe)) { throw "No PromptPetal.WidgetProvider.exe was published" }
+          Get-ChildItem widget-out | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+      # The provider exe is signed first for two reasons: it ships inside the MSIX signed,
+      # and its certificate's subject is what the MSIX manifest's Publisher must equal,
+      # exactly. Trusted Signing mints a short lived certificate, so the subject is read
+      # from this run's signature rather than typed into the manifest by hand.
+      - name: Sign the provider exe
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          trusted-signing-account-name: mlcsigning
+          certificate-profile-name: mlc-public-trust
+          files-folder: ${{ github.workspace }}/widget-out
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Write the package folder, with the certificate's publisher
+        id: pkg
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature widget-out/PromptPetal.WidgetProvider.exe
+          if ($sig.Status -ne "Valid") { throw "The provider exe is not signed (status $($sig.Status)); an MSIX cannot be installed unsigned." }
+          $subject = $sig.SignerCertificate.Subject
+          Write-Host "certificate subject: $subject"
+          $pkg = "widget-package"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item widget-out/* $pkg -Recurse
+          Copy-Item desktop/widget/Package/ProviderAssets $pkg -Recurse
+          New-Item -ItemType Directory -Force "$pkg/Public" | Out-Null
+          [xml]$m = Get-Content desktop/widget/Package/Package.appxmanifest
+          $m.Package.Identity.Publisher = $subject
+          $m.Save((Resolve-Path $pkg).Path + "\AppxManifest.xml")
+          Get-Content "$pkg/AppxManifest.xml" | Select-String -Pattern 'Publisher=|ClassId|Class Id|AppExtension Name' | Write-Host
+          "subject=$subject" >> $env:GITHUB_OUTPUT
+
+      - name: Pack the MSIX
+        shell: pwsh
+        run: |
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makeappx.exe |
+                      Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $makeappx) { throw "makeappx.exe not found in the Windows SDK on this runner" }
+          New-Item -ItemType Directory -Force desktop/widget/out | Out-Null
+          & $makeappx.FullName pack /o /d widget-package /p desktop/widget/out/PromptPetalWidget.msix
+          if ($LASTEXITCODE -ne 0) { throw "makeappx failed with $LASTEXITCODE" }
+
+      - name: Sign the MSIX
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          trusted-signing-account-name: mlcsigning
+          certificate-profile-name: mlc-public-trust
+          files-folder: ${{ github.workspace }}/desktop/widget/out
+          files-folder-filter: msix
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: The widget package is in place before the EXE is built
+        shell: pwsh
+        run: |
+          if (-not (Test-Path desktop/widget/out/PromptPetalWidget.msix)) { throw "The widget package was not packed; the EXE would ship without the widget" }
+
       - name: Build the EXE
         working-directory: desktop
         shell: pwsh
@@ -166,14 +254,6 @@ jobs:
       #
       # Signing happens BEFORE install and test, so the thing verified is the thing a
       # customer runs rather than an unsigned near copy.
-      - name: Azure login (federated, OIDC)
-        if: ${{ env.AZURE_CLIENT_ID != '' }}
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Sign the installer (Azure Trusted Signing)
         if: ${{ env.AZURE_CLIENT_ID != '' }}
         uses: azure/trusted-signing-action@v0
