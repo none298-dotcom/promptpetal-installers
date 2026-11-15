@@ -1,0 +1,53 @@
+name: Verify spell check on Windows and Linux
+
+# Runs the app's own `spellcheck` mode on a real Windows runner (Windows' ISpellChecker)
+# and a real Linux runner (Enchant with Hunspell). It asks the computer's checker to
+# underline two misspelled words, suggest "the" for "teh", and leave a clean sentence alone.
+# The source comes from the private repo with the same read-only deploy key and never
+# lands here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or sha of the private source to test"
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Ask Windows' spell checker
+        working-directory: desktop
+        shell: bash
+        run: ./gradlew run --no-daemon --args="spellcheck" 2>&1 | tee spell.log; grep -q "SPELL PASS" spell.log
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: none298-dotcom/promptpetal
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install the dictionary a Linux desktop has
+        run: sudo apt-get update -q && sudo apt-get install -y -q libenchant-2-2 hunspell-en-us
+      - name: Ask Enchant
+        working-directory: desktop
+        run: ./gradlew run --no-daemon --args="spellcheck" 2>&1 | tee spell.log; grep -q "SPELL PASS" spell.log
