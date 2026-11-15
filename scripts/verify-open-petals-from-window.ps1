@@ -148,7 +148,9 @@ if ([OpenPetalsClick]::NotepadText($notepad.MainWindowHandle) -notlike "*Testing
 $appPids = [System.Collections.Generic.HashSet[uint32]]::new([uint32[]](App-Pids))
 if ($appPids.Count -eq 0) { throw "No Prompt Petal process is running from $folder" }
 $before = [OpenPetalsClick]::VisibleWindows($appPids)
-$main = $before.GetEnumerator() | Where-Object { [OpenPetalsClick]::TitleOf($_.Key) -like "*$env:APP_NAME*" } | Select-Object -First 1
+# The largest one: the floating button is a window of the app with the same title, and it is not the one to click in.
+$main = $before.GetEnumerator() | Where-Object { [OpenPetalsClick]::TitleOf($_.Key) -like "*$env:APP_NAME*" } |
+        Sort-Object { ($_.Value.Right - $_.Value.Left) * ($_.Value.Bottom - $_.Value.Top) } -Descending | Select-Object -First 1
 if (-not $main) { throw "No visible Prompt Petal window to click Open Petals in" }
 # By a real click on its title bar, for the same reason. The app's foreground poll runs
 # every 400 ms, so give it time to have seen Notepad in front first.
