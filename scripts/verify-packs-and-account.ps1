@@ -156,6 +156,13 @@ function Find-Accent([System.Drawing.Bitmap]$bmp, [int]$left, [int]$top, [int]$r
 
 $env:PROMPTPETAL_HOME = $HomeDir
 $env:PROMPTPETAL_DEBUG = "1"
+
+# The live site refuses GitHub's runners (403), so the Packs page would be empty. A stand-in
+# serves the list and one pack, and the app is pointed at it.
+$stubStop = Join-Path $env:RUNNER_TEMP "packs-stub.stop"
+$stub = Start-Process pwsh -ArgumentList @("-NoProfile", "-File", (Join-Path $PSScriptRoot "packs-stub-server.ps1"), "-StopFile", $stubStop) -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 2
+$env:PROMPTPETAL_PACKS_BASE = "http://127.0.0.1:8793/api/packs"
 Remove-Item (Join-Path $HomeDir "debug-state.json") -ErrorAction SilentlyContinue
 
 $folder = Split-Path -Parent $ExePath
@@ -293,6 +300,7 @@ if (-not (Test-Path $debugFile)) {
   }
 }
 
+Set-Content -Path $stubStop -Value "stop"
 if ($failures.Count -gt 0) {
   Write-Host "::error::$($failures.Count) of 2 checks failed:"
   $failures | ForEach-Object { Write-Host "  - $_" }
