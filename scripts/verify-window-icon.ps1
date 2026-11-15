@@ -56,6 +56,27 @@ using System.Runtime.InteropServices;
 public class IconApi {
   [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll", EntryPoint="GetClassLongPtr")] public static extern IntPtr GetClassLongPtr(IntPtr h, int i);
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out Rect r);
+  public delegate bool EnumProc(IntPtr h, IntPtr p);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  // The largest visible top level window of one process. The app has more than one window (the
+  // floating button is one), and Process.MainWindowHandle may name the button, which has no title bar.
+  public static IntPtr Largest(uint processId) {
+    long best = 0; IntPtr found = IntPtr.Zero;
+    EnumWindows(delegate (IntPtr h, IntPtr p) {
+      uint owner; GetWindowThreadProcessId(h, out owner);
+      if (owner == processId && IsWindowVisible(h)) {
+        Rect r; GetWindowRect(h, out r);
+        long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+        if (area > best) { best = area; found = h; }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 
@@ -63,7 +84,8 @@ if (-not $AppName) { $AppName = [IO.Path]::GetFileNameWithoutExtension($ExePath)
 $proc = Get-Process -Name $AppName -ErrorAction SilentlyContinue |
         Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 if (-not $proc) { throw "No process named '$AppName' with a visible window" }
-$h = $proc.MainWindowHandle
+$h = [IconApi]::Largest([uint32]$proc.Id)
+if ($h -eq [IntPtr]::Zero) { $h = $proc.MainWindowHandle }
 
 # WM_GETICON: ICON_SMALL2 (2) is what the title bar draws, and Windows synthesises it from the
 # big icon when no small one is set. Falling back through ICON_BIG and then the window class
