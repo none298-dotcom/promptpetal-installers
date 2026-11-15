@@ -198,7 +198,8 @@ $deadline = (Get-Date).AddSeconds(20)
 while (-not $main -and (Get-Date) -lt $deadline) {
   Start-Sleep -Milliseconds 400
   $windows = [UiTest]::WindowsOf($testPids)
-  $main = $windows.GetEnumerator() | Where-Object { [UiTest]::TitleOf($_.Key) -like "*$env:APP_NAME*" } | Select-Object -First 1
+  $main = $windows.GetEnumerator() | Where-Object { [UiTest]::TitleOf($_.Key) -like "*$env:APP_NAME*" } |
+        Sort-Object { ($_.Value.Right - $_.Value.Left) * ($_.Value.Bottom - $_.Value.Top) } -Descending | Select-Object -First 1
 }
 if (-not $main) { throw "No window belonging to test pids $($testPids -join ', ') is titled '$env:APP_NAME'" }
 $rect = $main.Value
