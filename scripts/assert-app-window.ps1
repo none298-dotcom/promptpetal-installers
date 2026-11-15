@@ -35,6 +35,28 @@ public class WindowGeometry {
   public struct Rect { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")]
   public static extern bool GetWindowRect(IntPtr handle, out Rect rect);
+  public delegate bool EnumProc(IntPtr handle, IntPtr param);
+  [DllImport("user32.dll")]
+  static extern bool EnumWindows(EnumProc callback, IntPtr param);
+  [DllImport("user32.dll")]
+  static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+  [DllImport("user32.dll")]
+  static extern bool IsWindowVisible(IntPtr handle);
+  // The largest visible top level window of one process: width and height. The app has more
+  // than one window (the floating button is one), and Process.MainWindowHandle may name it.
+  public static int[] Largest(uint processId) {
+    long best = 0; int bestWidth = 0, bestHeight = 0;
+    EnumWindows(delegate (IntPtr handle, IntPtr param) {
+      uint owner; GetWindowThreadProcessId(handle, out owner);
+      if (owner == processId && IsWindowVisible(handle)) {
+        Rect rect; GetWindowRect(handle, out rect);
+        int w = rect.Right - rect.Left, h = rect.Bottom - rect.Top;
+        if ((long)w * h > best) { best = (long)w * h; bestWidth = w; bestHeight = h; }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return new int[] { bestWidth, bestHeight };
+  }
 }
 "@
 
@@ -68,6 +90,9 @@ foreach ($p in $found) {
   [void][WindowGeometry]::GetWindowRect($p.MainWindowHandle, [ref]$rect)
   $width  = $rect.Right - $rect.Left
   $height = $rect.Bottom - $rect.Top
+  # The app's biggest window is the one that proves it is the app and not a dialog.
+  $largest = [WindowGeometry]::Largest([uint32]$p.Id)
+  if (($largest[0] * $largest[1]) -gt ($width * $height)) { $width = $largest[0]; $height = $largest[1] }
   Write-Host "window: '$($p.MainWindowTitle)'  ${width}x${height}  from $($p.ProcessName) $($p.Id)"
   if ($p.MainWindowTitle -like "*.exe*") {
     Write-Host "::error::A window is titled '$($p.MainWindowTitle)'. A window titled after the executable is the jpackage launcher's error box, not the app."
