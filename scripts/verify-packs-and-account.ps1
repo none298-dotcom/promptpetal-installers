@@ -209,8 +209,9 @@ Start-Sleep -Milliseconds 400
 Save-Screen "uitest-petals-tab.png" | Out-Null
 
 # ── 1. Packs: click the Packs tab, find Add by its own colour, click it ──
-$packsTabX = $rect.Left + 262
-$packsTabY = $rect.Top + 163
+# Packs sits in the second row of tabs now (Library's own tabs), under the four along the top.
+$packsTabX = $rect.Left + 356
+$packsTabY = $rect.Top + 188
 Write-Host "clicking the Packs tab at $packsTabX, $packsTabY"
 [UiTest]::ClickAt($packsTabX, $packsTabY)
 Start-Sleep -Seconds 8
@@ -262,8 +263,9 @@ if (-not $button) {
 # ── 2. The account panel: click General, read it back from the debug dump ──
 [UiTest]::ForceForeground($main.Key)
 Start-Sleep -Milliseconds 400
-$generalTabX = $rect.Left + 516
-$generalTabY = $rect.Top + 163
+# Settings is the fourth of the four along the top (it is the GENERAL tab inside the app).
+$generalTabX = $rect.Left + 517
+$generalTabY = $rect.Top + 146
 if ($BreakMode -ne "skip_packs_and_account") {
   Write-Host "clicking the General tab at $generalTabX, $generalTabY"
   [UiTest]::ClickAt($generalTabX, $generalTabY)
