@@ -21,6 +21,8 @@ public class RingKeys {
   public delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc proc, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint vk);
@@ -34,7 +36,15 @@ public class RingKeys {
   }
   public static List<uint> VisibleWindowOwners() {
     var owners = new List<uint>();
-    EnumWindows((h, l) => { if (IsWindowVisible(h)) { uint p; GetWindowThreadProcessId(h, out p); owners.Add(p); } return true; }, IntPtr.Zero);
+    // Only windows of 200 by 200 or more count. The floating button is a window of the app too, and it
+    // is there before the keys are pressed and after, so counting it hides whether the ring opened.
+    EnumWindows((h, l) => {
+      if (IsWindowVisible(h)) {
+        Rect r; GetWindowRect(h, out r);
+        if (r.Right - r.Left >= 200 && r.Bottom - r.Top >= 200) { uint p; GetWindowThreadProcessId(h, out p); owners.Add(p); }
+      }
+      return true;
+    }, IntPtr.Zero);
     return owners;
   }
   public static void CtrlAltSpace() {
